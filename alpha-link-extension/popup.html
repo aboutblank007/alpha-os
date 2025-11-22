@@ -1,0 +1,73 @@
+<!DOCTYPE html>
+<html>
+
+<head>
+  <style>
+    body {
+      width: 300px;
+      padding: 10px;
+      font-family: sans-serif;
+    }
+
+    input {
+      width: 100%;
+      margin-bottom: 10px;
+      padding: 5px;
+      box-sizing: border-box;
+    }
+
+    button {
+      width: 100%;
+      margin-bottom: 5px;
+      padding: 8px;
+      cursor: pointer;
+      border-radius: 4px;
+      border: none;
+    }
+
+    #save {
+      background: #3b82f6;
+      color: white;
+    }
+
+    #save:hover {
+      background: #2563eb;
+    }
+
+    #test {
+      background: #10b981;
+      color: white;
+    }
+
+    #test:hover {
+      background: #059669;
+    }
+
+    #status {
+      margin-top: 10px;
+      font-size: 12px;
+      text-align: center;
+      min-height: 1.2em;
+    }
+
+    .success {
+      color: green;
+    }
+
+    .error {
+      color: red;
+    }
+  </style>
+</head>
+
+<body>
+  <h3>AlphaLink Settings</h3>
+  <label>API URL:</label>
+  <input type="text" id="apiUrl" placeholder="http://localhost:3000/api/trades">
+  <button id="save">Save</button>
+  <button id="test">Test Connection</button>
+  <div id="status"></div>
+  <script src="popup.js"></script>
+</body>
+
+</html>
