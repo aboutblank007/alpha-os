@@ -53,12 +53,21 @@ void CheckForCommands()
              string action = ExtractJsonString(json, "action");
              string symbol = ExtractJsonString(json, "symbol");
              double volume = ExtractJsonDouble(json, "volume");
+             double sl = ExtractJsonDouble(json, "sl");
+             double tp = ExtractJsonDouble(json, "tp");
+             long ticket = (long)ExtractJsonDouble(json, "ticket");
              
-             if(volume <= 0) volume = 0.01;
-             if(symbol == "" || symbol == NULL) symbol = Symbol(); 
-             
-             if(action == "BUY") ExecuteTrade(symbol, ORDER_TYPE_BUY, volume);
-             else if(action == "SELL") ExecuteTrade(symbol, ORDER_TYPE_SELL, volume);
+             if(action == "CLOSE") {
+                 if(ticket > 0) ClosePosition(ticket);
+                 else Print("CLOSE command missing ticket");
+             }
+             else {
+                 if(volume <= 0) volume = 0.01;
+                 if(symbol == "" || symbol == NULL) symbol = Symbol(); 
+                 
+                 if(action == "BUY") ExecuteTrade(symbol, ORDER_TYPE_BUY, volume, sl, tp);
+                 else if(action == "SELL") ExecuteTrade(symbol, ORDER_TYPE_SELL, volume, sl, tp);
+             }
          }
          else if (type == "GET_HISTORY") {
              string req_id = ExtractJsonString(json, "request_id");
@@ -182,23 +191,34 @@ void SendStatusUpdate()
    // 2. 持仓列表
    string positions_json = "\"positions\":[";
    int total = PositionsTotal();
+   // Print("Total Positions: ", total); // Debug
    for(int i = 0; i < total; i++)
      {
       ulong ticket = PositionGetTicket(i);
       if(ticket > 0)
         {
          if(i > 0) positions_json += ",";
+         
+         string symbol = PositionGetString(POSITION_SYMBOL);
+         string comment = PositionGetString(POSITION_COMMENT);
+         
+         // Sanitize comment to avoid JSON breakage
+         StringReplace(comment, "\"", "'");
+         StringReplace(comment, "\\", "/");
+         
          positions_json += StringFormat(
-            "{\"ticket\":%d,\"symbol\":\"%s\",\"type\":\"%s\",\"volume\":%.2f,\"open_price\":%.5f,\"current_price\":%.5f,\"pnl\":%.2f,\"swap\":%.2f,\"comment\":\"%s\"}",
+            "{\"ticket\":%d,\"symbol\":\"%s\",\"type\":\"%s\",\"volume\":%.2f,\"open_price\":%.5f,\"current_price\":%.5f,\"pnl\":%.2f,\"swap\":%.2f,\"sl\":%.5f,\"tp\":%.5f,\"comment\":\"%s\"}",
             ticket,
-            PositionGetString(POSITION_SYMBOL),
+            symbol,
             (PositionGetInteger(POSITION_TYPE) == POSITION_TYPE_BUY ? "BUY" : "SELL"),
             PositionGetDouble(POSITION_VOLUME),
             PositionGetDouble(POSITION_PRICE_OPEN),
             PositionGetDouble(POSITION_PRICE_CURRENT),
             PositionGetDouble(POSITION_PROFIT),
             PositionGetDouble(POSITION_SWAP),
-            PositionGetString(POSITION_COMMENT)
+            PositionGetDouble(POSITION_SL),
+            PositionGetDouble(POSITION_TP),
+            comment
          );
         }
      }
@@ -218,6 +238,9 @@ void SendStatusUpdate()
    StringToCharArray(json, data, 0, StringLen(json), CP_UTF8);
    char result[];
    string headers = "Content-Type: application/json\r\n";
+   
+   // Debug: Print JSON if positions > 0
+   if (total > 0) Print("Sending Status JSON: ", json);
    
    WebRequest("POST", ApiUrl + "/status/update", headers, 500, data, result, headers);
   }
@@ -264,7 +287,7 @@ void OnTradeTransaction(const MqlTradeTransaction& trans,
      }
   }
 
-void ExecuteTrade(string symbol, ENUM_ORDER_TYPE type, double volume)
+void ExecuteTrade(string symbol, ENUM_ORDER_TYPE type, double volume, double sl, double tp)
   {
    MqlTradeRequest request;
    MqlTradeResult  result;
@@ -277,6 +300,8 @@ void ExecuteTrade(string symbol, ENUM_ORDER_TYPE type, double volume)
    request.type   = type;
    request.price  = (type == ORDER_TYPE_BUY) ? SymbolInfoDouble(symbol, SYMBOL_ASK) : SymbolInfoDouble(symbol, SYMBOL_BID);
    request.deviation = 10; // 允许 10 点滑点
+   request.sl = sl;
+   request.tp = tp;
    request.type_filling = (ENUM_ORDER_TYPE_FILLING)GetFillingMode(symbol); // 自动适配填充模式
    
    if(OrderSend(request, result)) 
@@ -287,4 +312,43 @@ void ExecuteTrade(string symbol, ENUM_ORDER_TYPE type, double volume)
      {
       Print("Trade Failed: ", result.retcode, " Comment: ", result.comment);
      }
+  }
+
+void ClosePosition(long ticket)
+  {
+   if(!PositionSelectByTicket(ticket)) {
+       Print("ClosePosition: Ticket not found ", ticket);
+       return;
+   }
+   
+   string symbol = PositionGetString(POSITION_SYMBOL);
+   long type = PositionGetInteger(POSITION_TYPE);
+   double volume = PositionGetDouble(POSITION_VOLUME);
+   
+   MqlTradeRequest request;
+   MqlTradeResult  result;
+   ZeroMemory(request);
+   ZeroMemory(result);
+   
+   request.action = TRADE_ACTION_DEAL;
+   request.position = ticket;
+   request.symbol = symbol;
+   request.volume = volume;
+   request.deviation = 10;
+   request.type_filling = (ENUM_ORDER_TYPE_FILLING)GetFillingMode(symbol);
+   
+   // Close by opening opposite order
+   if(type == POSITION_TYPE_BUY) {
+       request.type = ORDER_TYPE_SELL;
+       request.price = SymbolInfoDouble(symbol, SYMBOL_BID);
+   } else {
+       request.type = ORDER_TYPE_BUY;
+       request.price = SymbolInfoDouble(symbol, SYMBOL_ASK);
+   }
+   
+   if(OrderSend(request, result)) {
+       Print("Position Closed! Ticket: ", ticket);
+   } else {
+       Print("Close Failed: ", result.retcode);
+   }
   }

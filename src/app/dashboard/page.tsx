@@ -396,7 +396,7 @@ export default function DashboardPage() {
                 case 'symbols':
                     return <SymbolPerformance trades={closedTrades} />;
                 case 'orders':
-                    return <OngoingOrders orders={openTrades} />;
+                    return <OngoingOrders />;
                 case 'recent':
                     return <RecentTrades trades={closedTrades} />;
                 case 'insights':

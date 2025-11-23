@@ -18,36 +18,33 @@ cd ~/trading-bridge/docker
 - `mt5-vnc`: MT5 交易平台 (VNC: http://49.235.153.73:3000)
 - `bridge-api`: API 服务 (http://api.lootool.cn:8000)
 
+**前端服务：**
+- `alpha-os-web`: 前端页面 (http://49.235.153.73:3001)
+  - 部署路径: `~/alpha-os`
+  - 独立容器部署，通过 `deploy_frontend.sh` 管理
+
 **常用命令：**
 
 ```bash
-# 查看容器状态
+# 1. 交易桥接服务 (MT5 + API)
+cd ~/trading-bridge/docker
 docker-compose ps
-
-# 查看日志
 docker-compose logs -f
-docker-compose logs -f bridge-api
-docker-compose logs -f mt5-vnc
-
-# 重启容器
 docker-compose restart
-docker-compose restart bridge-api
 
-# 停止/启动
-docker-compose stop
-docker-compose start
-docker-compose down
-
-# 进入容器
-docker-compose exec bridge-api bash
-docker-compose exec mt5-vnc bash
-
-# 重新构建并启动
-docker-compose build
-docker-compose up -d
+# 2. 前端服务
+cd ~/alpha-os
+docker-compose ps
+docker-compose logs -f
+docker-compose restart
 ```
 
 ### 文件同步与部署
+
+**一键部署前端 (AlphaOS Web):**
+```bash
+./deploy_frontend.sh
+```
 
 **同步 MQL5 EA:**
 ```bash

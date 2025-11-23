@@ -1,5 +1,5 @@
 "use client";
-import React, { useState } from 'react';
+import React, { useState, useRef } from 'react';
 import { useBridgeStatus } from '@/hooks/useBridgeStatus';
 import { MarketHeader } from '@/components/market/MarketHeader';
 import { SymbolRow } from '@/components/market/SymbolRow';
@@ -13,20 +13,28 @@ interface MarketWatchProps {
 export function MarketWatch({ isConnected: propIsConnected, onTrade, onSymbolSelect }: MarketWatchProps) {
     const [executing, setExecuting] = useState<string | null>(null);
     const { status, isConnected: bridgeConnected, activeSymbols, symbolPrices } = useBridgeStatus(1000);
+    const executionLock = useRef(false); // Add ref lock to prevent rapid clicks
 
     // Use bridge connection status if prop is not provided or overrides
     const isConnected = propIsConnected && bridgeConnected;
 
     const handleTrade = async (symbol: string, side: 'BUY' | 'SELL', e: React.MouseEvent) => {
         e.stopPropagation();
-        if (!onTrade) return;
+        if (!onTrade || executionLock.current) return; // Check lock
+        
+        executionLock.current = true; // Set lock immediately
         setExecuting(`${symbol}-${side}`);
+        
         try {
             await onTrade(symbol, side);
         } catch (e) {
             console.error(e);
         } finally {
             setExecuting(null);
+            // Add a small delay before unlocking to prevent accidental double taps
+            setTimeout(() => {
+                executionLock.current = false;
+            }, 500);
         }
     };
 

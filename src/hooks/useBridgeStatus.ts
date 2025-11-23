@@ -7,6 +7,7 @@ export interface BridgeStatus {
     symbol_prices: Record<string, any>;
     pending_commands: number;
     last_trade: any;
+    positions?: any[];
 }
 
 export function useBridgeStatus(pollInterval = 1000) {

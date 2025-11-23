@@ -19,13 +19,16 @@ last_trade = None  # Stores the most recent trade execution
 history_requests: Dict[str, asyncio.Future] = {}
 
 class TradeRequest(BaseModel):
-    action: str # BUY, SELL
-    symbol: str
-    volume: float = 0.01
+    action: str # BUY, SELL, CLOSE
+    symbol: Optional[str] = None
+    volume: Optional[float] = 0.01
+    sl: Optional[float] = 0.0
+    tp: Optional[float] = 0.0
+    ticket: Optional[int] = 0
 
 class StatusUpdate(BaseModel):
     account: dict  # { balance, equity, margin, free_margin }
-    positions: List[dict] # [{ ticket, symbol, type, volume, pnl, ... }]
+    positions: List[dict] # [{ ticket, symbol, type, volume, pnl, sl, tp ... }]
     # Legacy support
     symbol: Optional[str] = None
     bid: Optional[float] = None
@@ -54,7 +57,10 @@ async def execute_trade(trade: TradeRequest):
         "type": "TRADE",
         "action": trade.action,
         "symbol": trade.symbol,
-        "volume": trade.volume
+        "volume": trade.volume,
+        "sl": trade.sl,
+        "tp": trade.tp,
+        "ticket": trade.ticket
     }
     command_queue.append(command)
     return {"status": "queued", "queue_length": len(command_queue)}
@@ -106,6 +112,11 @@ async def pop_command():
 @app.post("/status/update")
 async def update_status(status: StatusUpdate):
     global last_status
+    
+    # Debug: Print positions count if any
+    if status.positions:
+        print(f"Received {len(status.positions)} positions from EA")
+        # print(status.positions) # Optional: verbose logging
     
     last_status = status.dict()
     
