@@ -1,3 +1,69 @@
+## 🔧 服务器连接与容器管理
+
+### 服务器连接方式
+
+**连接命令：**
+```bash
+ssh alphaos
+```
+
+### Docker 容器管理
+
+**项目路径：**
+```bash
+cd ~/trading-bridge/docker
+```
+
+**容器列表：**
+- `mt5-vnc`: MT5 交易平台 (VNC: http://49.235.153.73:3000)
+- `bridge-api`: API 服务 (http://api.lootool.cn:8000)
+
+**常用命令：**
+
+```bash
+# 查看容器状态
+docker-compose ps
+
+# 查看日志
+docker-compose logs -f
+docker-compose logs -f bridge-api
+docker-compose logs -f mt5-vnc
+
+# 重启容器
+docker-compose restart
+docker-compose restart bridge-api
+
+# 停止/启动
+docker-compose stop
+docker-compose start
+docker-compose down
+
+# 进入容器
+docker-compose exec bridge-api bash
+docker-compose exec mt5-vnc bash
+
+# 重新构建并启动
+docker-compose build
+docker-compose up -d
+```
+
+### 文件同步与部署
+
+**同步 MQL5 EA:**
+```bash
+scp trading-bridge/mql5/BridgeEA.mq5 alphaos:~/trading-bridge/mql5/
+# 然后在 VNC 中重新编译 EA
+```
+
+**同步 Python Server:**
+```bash
+scp trading-bridge/src/main.py alphaos:~/trading-bridge/src/
+# 然后重启 API 容器
+ssh alphaos "cd ~/trading-bridge/docker && docker-compose restart bridge-api"
+```
+
+---
+
 # 📋 待办事项
 
 ## 🐛 已解决的问题
@@ -23,7 +89,18 @@
 ## 🆕 新需求
 
 ### 优先级 1: 在仪表盘添加主流货币对K线图和技术指标 (✅ 已完成)
-... (保持不变)
+- [x] **集成 TradingView 轻量级图表库**: 支持缩放、平移和自定义数据。
+- [x] **自定义数据源 (OANDA API)**: 实现了 `OandaAdapter`，通过 `getPricing` 和 `getCandles` 获取实时和历史数据。
+- [x] **技术指标计算**: 集成了 `technicalindicators` 库，前端动态计算 SMA、EMA、RSI 和 MACD。
+- [x] **多品种切换**: 支持 USDJPY, EURUSD, XAUUSD, BTCUSD。
+- [x] **图表交互**:
+    - [x] 动态切换时间周期 (1M, 5M, 1H, 4H, 1D)。
+    - [x] 指标开关控制 (Checkbox)。
+    - [x] 十字光标和实时价格标签。
+- [x] **数据源迁移**: 
+    - [x] 从 OANDA 迁移到 MT5 Bridge。
+    - [x] 支持从 MT5 获取历史 K 线 (通过 `GET /history`)。
+    - [x] 支持从 MT5 获取实时报价。
 
 ### 优先级 2: 跨平台交易桥接系统 (✅ 已完成)
 
@@ -44,11 +121,13 @@
    - [x] 开发 MT5 Expert Advisor (EA) (基于 WebRequest)
    - [x] 开发桥接 API 服务器 (Python/FastAPI)
    - [x] 配置 Docker Compose (双容器: mt5, bridge-api)
+   - [x] **历史数据支持**: 升级 Server 支持 K 线数据查询与回传。
 
 3. **客户端实现 (Mac/AlphaOS)**
    - [x] 开发 AlphaOS 中的 API 客户端
    - [x] 实现交易指令接口 (HTTP POST)
    - [x] 实现状态同步 (HTTP GET)
+   - [x] **MT5 Client**: 封装 `getHistory` 和 `getStatus` 方法。
 
 4. **验证与部署**
    - [x] 解决 Docker 构建问题 (pip 源, 架构兼容)
@@ -59,6 +138,7 @@
 - ✅ 解决了复杂的 Docker 网络 MTU 问题。
 - ✅ 通过配置公网域名解析解决了 Wine 环境下的 DNS 问题。
 - ✅ 验证了指令下发和状态上报的全流程。
+- ✅ **数据源切换**: 完成从 OANDA 到 MT5 的切换。
 
 **技术架构确认:**
 ```
@@ -68,11 +148,55 @@ api.lootool.cn:8000                 49.235.153.73:8000
 ```
 
 ### 优先级 3: 仪表盘 UI 优化 (✅ 已完成)
-... (保持不变)
+
+**已完成工作 (Phase 4: UI/UX Polish):**
+- [x] **全局样式升级**: 采用 Deep Space 玻璃拟态主题，优化调色板和渐变。
+- [x] **仪表盘重构**:
+    - [x] 优化统计卡片 (Stat Cards) 视觉效果。
+    - [x] 重构图表头部，移除冗余控件。
+    - [x] 改进侧边栏和布局结构。
+- [x] **市场监视面板 (Market Watch)**:
+    - [x] 新增独立侧边栏面板。
+    - [x] 显示 MT5 实时连接状态。
+    - [x] 集成实时报价和快速交易按钮。
+    - [x] 解决布局重叠问题。
+
+---
+
+### 优先级 4: 稳定性与自动化 (Phase 2 & 3) ✅ 已完成
+
+**目标描述：**
+执行优化计划的第二阶段（稳定性）和第三阶段（自动化）。
+
+**主要任务：**
+
+#### 阶段 2: 稳定性 (Stability)
+- [x] **环境变量强校验**: 引入 `zod`，启动时验证 Supabase/OANDA 配置。
+- [x] **Bridge 健康监控**: 集中化状态轮询 (`useBridgeStatus`)，监控连接延迟。
+- [x] **代码重构**: 更新图表组件使用统一的状态 Hook。
+
+#### 阶段 3: 自动化 (Automation)
+- [x] **自动交易归档**: Bridge 服务集成 Supabase，实现下单即写入数据库 (无需 CSV)。
+- [x] **基础设施更新**: Docker Compose 注入数据库凭证。
+- [ ] **AI 复盘页面**: 搭建 `/review` 页面框架 (下一步计划)。
+
+---
+
+## 🔮 下一步计划 (Next Steps)
+
+### 1. AI 复盘接口 (AI Review Interface)
+- [ ] 实现 AI 分析逻辑，对交易记录进行智能评分和建议。
+- [ ] 开发 `/review` 页面前端。
+
+### 2. 移动端适配 (Mobile Optimization)
+- [ ] 优化仪表盘在移动设备上的显示。
+- [ ] 调整图表和表格的响应式布局。
+
+### 3. OANDA 连接修复
+- [ ] 解决本地开发环境连接 OANDA API 的 SSL/网络问题。
 
 ---
 
 ## 📝 待完成的其他功能
-... (保持不变)
 
-**最后更新：** 2025-11-23 07:30
+**最后更新：** 2025-11-23 21:00

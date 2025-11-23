@@ -48,7 +48,7 @@ function std(values: number[], mean: number[], k = 20) {
     return res;
 }
 
-export function EquityCurve({ data, period = '1M', overlays = { ema: true, bb: false }, tags = [], onPeriodChange, onToggleOverlay }: EquityCurveProps) {
+export function EquityCurve({ data, period = '1M', overlays = { ema: true, bb: false }, tags = [], onPeriodChange, onToggleOverlay, onAddTag }: EquityCurveProps & { onAddTag?: () => void }) {
     const periods: Period[] = ['1W', '1M', '3M', 'YTD', 'ALL'];
     const windows = React.useMemo<Record<Period, number>>(() => ({ '1W': 7, '1M': 30, '3M': 90, 'YTD': 365, 'ALL': data.length }), [data.length]);
     const filtered = React.useMemo(() => data.slice(-windows[period]), [data, period, windows]);
@@ -63,13 +63,13 @@ export function EquityCurve({ data, period = '1M', overlays = { ema: true, bb: f
     const maxEquity = Math.max(...values) * 1.005;
 
     return (
-        <div className="glass-panel p-6 rounded-xl h-[500px] flex flex-col">
-            <div className="flex justify-between items-start mb-6">
+        <div className="glass-panel p-6 rounded-xl h-full flex flex-col">
+            <div className="flex flex-wrap justify-between items-start mb-6 gap-4">
                 <div>
                     <h3 className="text-lg font-semibold text-white">权益曲线</h3>
                     <p className="text-sm text-slate-500 mt-1">净资产价值 (NAV)</p>
                 </div>
-                <div className="flex items-center gap-4">
+                <div className="flex flex-wrap items-center gap-4">
                     <div className="flex gap-1 bg-white/5 p-1 rounded-lg">
                         {periods.map((p) => (
                             <button
@@ -85,6 +85,14 @@ export function EquityCurve({ data, period = '1M', overlays = { ema: true, bb: f
                         <button className={`px-2 py-1 rounded text-xs ${overlays.ema ? 'bg-white/10 text-white' : 'text-slate-400 hover:text-white hover:bg-white/5'}`} onClick={() => onToggleOverlay?.('ema')}>EMA</button>
                         <button className={`px-2 py-1 rounded text-xs ${overlays.bb ? 'bg-white/10 text-white' : 'text-slate-400 hover:text-white hover:bg-white/5'}`} onClick={() => onToggleOverlay?.('bb')}>BB</button>
                     </div>
+                    {onAddTag && (
+                        <button
+                            onClick={onAddTag}
+                            className="px-3 py-1.5 rounded-lg bg-accent-primary/10 text-accent-primary text-xs font-medium hover:bg-accent-primary/20 transition-colors border border-accent-primary/20"
+                        >
+                            + 标记
+                        </button>
+                    )}
                 </div>
             </div>
 

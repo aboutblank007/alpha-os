@@ -14,9 +14,11 @@ import { supabase, type Trade } from '@/lib/supabase';
 import { Button } from '@/components/ui/Button';
 import { Modal } from '@/components/ui/Modal';
 import { TradingViewChart } from '@/components/charts/TradingViewChart';
+import { MarketWatch } from '@/components/MarketWatch';
 import { DndContext, closestCenter, KeyboardSensor, PointerSensor, useSensor, useSensors, DragOverlay, defaultDropAnimationSideEffects, DragStartEvent, DragEndEvent } from '@dnd-kit/core';
 import { arrayMove, SortableContext, sortableKeyboardCoordinates, rectSortingStrategy } from '@dnd-kit/sortable';
 import { SortableItem } from '@/components/dashboard/SortableItem';
+import { useBridgeStatus } from '@/hooks/useBridgeStatus';
 
 interface DashboardStats {
     totalPnL: number;
@@ -42,18 +44,46 @@ export default function DashboardPage() {
     const [equityData, setEquityData] = useState<Array<{ date: string; equity: number }>>([]);
     const [loading, setLoading] = useState(true);
     const [period, setPeriod] = useState<Period>('1M');
-    const [overlays, setOverlays] = useState<{ ema: boolean; bb: boolean }>({ ema: true, bb: false });
+    const [overlays, setOverlays] = useState<{ ema: boolean; bb: boolean }>({ ema: false, bb: false });
     const [tags, setTags] = useState<TagItem[]>([]);
     const [confirm, setConfirm] = useState<ConfirmKind>(null);
     const [workspace, setWorkspace] = useState<string>('默认工作区');
 
     // Default layout with new components
     const [layout, setLayout] = useState<string[]>(() => {
-        const saved = typeof window !== 'undefined' ? localStorage.getItem('alphaos_layout_v3') : null;
-        return saved ? JSON.parse(saved) : ['market', 'chart', 'symbols', 'orders', 'insights', 'sentiment', 'alerts', 'recent'];
+        const saved = typeof window !== 'undefined' ? localStorage.getItem('alphaos_layout_v4') : null;
+        return saved ? JSON.parse(saved) : ['market', 'marketWatch', 'chart', 'symbols', 'orders', 'insights', 'sentiment', 'alerts', 'recent'];
     });
 
     const [activeId, setActiveId] = useState<string | null>(null);
+    const [selectedSymbol, setSelectedSymbol] = useState<string>('EUR_USD'); // State for selected chart symbol
+
+    const { isConnected } = useBridgeStatus();
+
+    const handleTrade = async (symbol: string, side: 'BUY' | 'SELL') => {
+        try {
+            const res = await fetch('/api/bridge/execute', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    action: side,
+                    symbol: symbol.replace('/', '').replace('_', ''), // Normalize symbol
+                    volume: 0.01 // Fixed volume for MVP
+                })
+            });
+
+            const data = await res.json();
+            if (!res.ok || data.error) {
+                throw new Error(data.error || 'Trade failed');
+            }
+            console.log('Trade executed:', data);
+            // Optional: Refresh trades or show toast
+            fetchTrades();
+        } catch (e) {
+            console.error('Trade execution error:', e);
+            alert(`Trade Failed: ${e instanceof Error ? e.message : 'Unknown error'}`);
+        }
+    };
 
     const sensors = useSensors(
         useSensor(PointerSensor, {
@@ -280,7 +310,7 @@ export default function DashboardPage() {
                 const oldIndex = items.indexOf(active.id as string);
                 const newIndex = items.indexOf(over.id as string);
                 const newLayout = arrayMove(items, oldIndex, newIndex);
-                localStorage.setItem('alphaos_layout_v3', JSON.stringify(newLayout));
+                localStorage.setItem('alphaos_layout_v4', JSON.stringify(newLayout));
                 return newLayout;
             });
         }
@@ -308,8 +338,11 @@ export default function DashboardPage() {
 
             switch (componentKey) {
                 case 'market':
-                case 'chart':
                     return 'col-span-1 md:col-span-2 lg:col-span-3';
+                case 'marketWatch':
+                    return 'col-span-1 md:col-span-1 lg:col-span-1'; // Fits next to chart
+                case 'chart':
+                    return 'col-span-1 md:col-span-2 lg:col-span-3'; // Equity Curve
                 case 'orders':
                 case 'recent':
                     return 'col-span-1 md:col-span-2 lg:col-span-4';
@@ -321,18 +354,20 @@ export default function DashboardPage() {
         const getHeight = (componentKey: string) => {
             switch (componentKey) {
                 case 'market':
+                case 'marketWatch':
+                    return 'h-[400px] md:h-[500px]';
                 case 'chart':
                 case 'symbols':
-                    return 'h-[500px]';
+                    return 'h-[350px] md:h-[500px]';
                 case 'orders':
                 case 'recent':
-                    return 'h-[400px]';
+                    return 'h-[350px] md:h-[400px]';
                 case 'insights':
                 case 'sentiment':
                 case 'alerts':
-                    return 'h-[300px]';
+                    return 'h-[250px] md:h-[300px]';
                 default:
-                    return 'h-[300px]';
+                    return 'h-[250px] md:h-[300px]';
             }
         };
 
@@ -345,15 +380,18 @@ export default function DashboardPage() {
         const content = (() => {
             switch (key) {
                 case 'market':
-                    return <TradingViewChart className="h-full" height={500} />;
+                    return <TradingViewChart className="h-full" height={500} initialSymbol={selectedSymbol} key={selectedSymbol} />; // Add key to force re-render on symbol change
                 case 'chart':
                     return (
-                        <>
-                            <EquityCurve data={equityData} period={period} overlays={overlays} tags={tags} onPeriodChange={setPeriod} onToggleOverlay={toggleOverlay} />
-                            <div className="mt-3 flex items-center gap-2">
-                                <Button variant="outline" onClick={() => addTag(equityData.slice(-1)[0]?.date ?? '', '策略标记')}>添加策略标记</Button>
-                            </div>
-                        </>
+                        <EquityCurve
+                            data={equityData}
+                            period={period}
+                            overlays={overlays}
+                            tags={tags}
+                            onPeriodChange={setPeriod}
+                            onToggleOverlay={toggleOverlay}
+                            onAddTag={() => addTag(equityData.slice(-1)[0]?.date ?? '', '策略标记')}
+                        />
                     );
                 case 'symbols':
                     return <SymbolPerformance trades={closedTrades} />;
@@ -365,6 +403,8 @@ export default function DashboardPage() {
                     return <TradingInsights trades={trades} />;
                 case 'sentiment':
                     return <SentimentAnalysis trades={trades} />;
+                case 'marketWatch':
+                    return <MarketWatch isConnected={isConnected} onTrade={handleTrade} onSymbolSelect={setSelectedSymbol} />;
                 case 'alerts':
                     return <RiskAlerts stats={stats} onResetLayout={() => setConfirm('reset')} />;
                 default:
@@ -382,7 +422,7 @@ export default function DashboardPage() {
 
     if (loading) {
         return (
-            <div className="max-w-[1600px] mx-auto space-y-8 animate-pulse">
+            <div className="max-w-screen-3xl mx-auto space-y-8 animate-pulse">
                 <div className="h-48 rounded-3xl bg-white/5"></div>
                 <div className="grid grid-cols-1 md:grid-cols-4 gap-6">
                     {[1, 2, 3, 4].map(i => (
@@ -398,40 +438,52 @@ export default function DashboardPage() {
     }
 
     return (
-        <div className="max-w-[1600px] mx-auto pb-20 space-y-8">
+        <div className="max-w-screen-3xl mx-auto pb-12 md:pb-20 space-y-4 md:space-y-8">
             {/* Premium Welcome Banner */}
-            <div className="relative overflow-hidden rounded-3xl glass-panel-strong p-8 md:p-10 animate-fade-in-up">
-                <div className="absolute top-0 right-0 w-[600px] h-[600px] bg-accent-primary/10 rounded-full blur-3xl -translate-y-1/2 translate-x-1/3 pointer-events-none"></div>
-                <div className="absolute bottom-0 left-0 w-[400px] h-[400px] bg-accent-secondary/10 rounded-full blur-3xl translate-y-1/3 -translate-x-1/3 pointer-events-none"></div>
+            <div className="relative overflow-hidden rounded-2xl md:rounded-3xl glass-panel-strong p-6 md:p-12 animate-fade-in-up border border-white/10 shadow-2xl">
+                {/* Dynamic Background Mesh - Hidden on mobile for performance */}
+                <div className="hidden md:block absolute top-0 right-0 w-[800px] h-[800px] bg-accent-primary/20 rounded-full blur-[120px] -translate-y-1/2 translate-x-1/3 pointer-events-none mix-blend-screen"></div>
+                <div className="hidden md:block absolute bottom-0 left-0 w-[600px] h-[600px] bg-accent-secondary/20 rounded-full blur-[100px] translate-y-1/3 -translate-x-1/3 pointer-events-none mix-blend-screen"></div>
+                <div className="absolute inset-0 bg-[url('/grid.svg')] opacity-10 md:opacity-20 pointer-events-none"></div>
 
-                <div className="relative z-10 flex flex-col md:flex-row md:items-end justify-between gap-6">
-                    <div className="space-y-4 max-w-2xl">
-                        <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-white/5 border border-white/10 text-xs font-medium text-accent-primary">
+                <div className="relative z-10 flex flex-col gap-6 md:gap-8">
+                    <div className="space-y-4 md:space-y-6">
+                        <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-white/5 border border-white/10 text-xs font-medium text-accent-primary backdrop-blur-md shadow-sm">
                             <span className="relative flex h-2 w-2">
                                 <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-accent-primary opacity-75"></span>
                                 <span className="relative inline-flex rounded-full h-2 w-2 bg-accent-primary"></span>
                             </span>
                             {workspace}
                         </div>
-                        <h1 className="text-4xl md:text-5xl font-bold text-white tracking-tight-custom text-balance">
-                            欢迎回来，<span className="text-transparent bg-clip-text bg-gradient-to-r from-white to-slate-400">交易员</span>
-                        </h1>
-                        <p className="text-lg text-slate-400 max-w-xl leading-relaxed">
-                            您的投资组合今天表现良好。您有 <span className="text-white font-medium">{openTrades.length} 个活跃信号</span>，胜率正在上升。
-                        </p>
+
+                        <div className="space-y-2">
+                            <h1 className="text-3xl md:text-5xl lg:text-6xl font-bold text-white tracking-tight-custom text-balance drop-shadow-lg">
+                                欢迎回来，<span className="text-gradient">交易员</span>
+                            </h1>
+                            <p className="text-sm md:text-lg text-slate-400 max-w-xl leading-relaxed font-light">
+                                您的投资组合今天表现良好。您有 <span className="text-white font-medium border-b border-accent-success/50">{openTrades.length} 个活跃信号</span>，胜率正在上升。
+                            </p>
+                        </div>
                     </div>
 
-                    <div className="flex gap-3 flex-wrap">
-                        <button className="group flex items-center gap-2 px-5 py-3 rounded-xl bg-white/5 hover:bg-white/10 border border-white/5 transition-all text-sm font-medium text-slate-300 hover:text-white">
-                            <Calendar size={18} className="text-slate-400 group-hover:text-white transition-colors" />
+                    <div className="flex gap-2 md:gap-3 flex-wrap">
+                        <button className="group flex items-center gap-2 px-4 md:px-5 py-2 md:py-3 rounded-xl bg-white/5 hover:bg-white/10 border border-white/5 transition-all text-xs md:text-sm font-medium text-slate-300 hover:text-white backdrop-blur-sm">
+                            <Calendar size={16} className="text-slate-400 group-hover:text-white transition-colors md:w-[18px] md:h-[18px]" />
                             <span>本月</span>
                         </button>
-                        <Button variant="primary" rightIcon={<ArrowRight size={18} />}>新建分析</Button>
-                        <Button variant="secondary" leftIcon={<Share2 size={18} />} onClick={() => setConfirm('share')}>分享</Button>
-                        <Button variant="secondary" leftIcon={<FileDown size={18} />} onClick={() => setConfirm('export')}>导出</Button>
-                        <div className="flex gap-1 bg-white/5 p-1 rounded-lg">
+                        <Button variant="primary" rightIcon={<ArrowRight size={16} />} className="btn-premium shadow-lg shadow-accent-primary/20 text-xs md:text-sm px-4 md:px-5 py-2 md:py-3">新建分析</Button>
+                        <Button variant="secondary" leftIcon={<Share2 size={16} />} onClick={() => setConfirm('share')} className="backdrop-blur-sm text-xs md:text-sm px-4 md:px-5 py-2 md:py-3">分享</Button>
+                        <Button variant="secondary" leftIcon={<FileDown size={16} />} onClick={() => setConfirm('export')} className="backdrop-blur-sm text-xs md:text-sm px-4 md:px-5 py-2 md:py-3">导出</Button>
+
+                        <div className="hidden md:flex gap-1 bg-black/40 p-1 rounded-xl border border-white/5 backdrop-blur-md">
                             {['默认工作区', '分析', '策略'].map(w => (
-                                <button key={w} onClick={() => setWorkspace(w)} className={`px-3 py-1 text-xs rounded ${workspace === w ? 'bg-white/10 text-white' : 'text-slate-400 hover:text-white hover:bg-white/5'}`}>{w}</button>
+                                <button
+                                    key={w}
+                                    onClick={() => setWorkspace(w)}
+                                    className={`px-3 py-1.5 text-xs font-medium rounded-lg transition-all ${workspace === w ? 'bg-white/10 text-white shadow-sm' : 'text-slate-400 hover:text-white hover:bg-white/5'}`}
+                                >
+                                    {w}
+                                </button>
                             ))}
                         </div>
                     </div>
@@ -445,7 +497,7 @@ export default function DashboardPage() {
                 onDragStart={handleDragStart}
                 onDragEnd={handleDragEnd}
             >
-                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6 auto-rows-min">
+                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4 md:gap-6 auto-rows-min">
                     {/* Stats - Fixed */}
                     <div className="col-span-1 animate-fade-in-up" style={{ animationDelay: '0.1s' }}>
                         <StatCard

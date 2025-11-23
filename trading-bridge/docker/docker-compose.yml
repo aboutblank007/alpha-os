@@ -29,6 +29,8 @@ services:
       # API binds to 0.0.0.0 inside its container
       - ZMQ_BIND_ADDRESS=tcp://0.0.0.0:5555
       - ZMQ_SUB_ADDRESS=tcp://0.0.0.0:5556
+      - SUPABASE_URL=${SUPABASE_URL}
+      - SUPABASE_KEY=${SUPABASE_KEY}
     networks:
       - trading-net
     restart: unless-stopped

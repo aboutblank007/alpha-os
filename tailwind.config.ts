@@ -8,22 +8,8 @@ export default {
     ],
     theme: {
         extend: {
-            colors: {
-                background: "var(--background)",
-                foreground: "var(--foreground)",
-                accent: {
-                    primary: "var(--accent-primary)",
-                    secondary: "var(--accent-secondary)",
-                    cyan: "var(--accent-cyan)",
-                    success: "var(--accent-success)",
-                    danger: "var(--accent-danger)",
-                    warning: "var(--accent-warning)",
-                },
-                surface: {
-                    glass: "var(--surface-glass)",
-                    "glass-strong": "var(--surface-glass-strong)",
-                    border: "var(--surface-border)",
-                }
+            screens: {
+                '3xl': '1920px',
             },
             animation: {
                 "fade-in": "fadeIn 0.5s ease-out forwards",

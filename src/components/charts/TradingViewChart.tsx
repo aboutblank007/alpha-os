@@ -46,6 +46,10 @@ const SYMBOLS = [
   { label: 'BTC/USD', value: 'BTC_USD' },
 ];
 
+import { useBridgeStatus } from '@/hooks/useBridgeStatus';
+
+// ... imports
+
 export function TradingViewChart({ initialSymbol = 'EUR_USD', height = 500, className }: TradingViewChartProps) {
   const chartContainerRef = useRef<HTMLDivElement>(null);
   const chartRef = useRef<IChartApi | null>(null);
@@ -58,75 +62,54 @@ export function TradingViewChart({ initialSymbol = 'EUR_USD', height = 500, clas
   const [chartData, setChartData] = useState<CandlestickData[]>([]);
 
   const [indicators, setIndicators] = useState({
-    pivotTrend: true, // Default enabled as requested
+    pivotTrend: false, 
   });
   const [trendState, setTrendState] = useState<TrendState | null>(null);
   const [showSettings, setShowSettings] = useState(false);
 
-  // Bridge State
-  const [bridgeStatus, setBridgeStatus] = useState<BridgeStatus | null>(null);
+  // Use Bridge Hook
+  const { status: bridgeStatus, isConnected, activeSymbols } = useBridgeStatus();
   const [executing, setExecuting] = useState<string | null>(null);
 
-  // Poll Bridge Status
+  // Sync to Supabase logic (Legacy Frontend Sync - to be replaced by Backend Sync)
   const lastProcessedTicketRef = useRef<number | null>(null);
-  
-  useEffect(() => {
-    let mounted = true;
-    const fetchStatus = async () => {
-      try {
-        const res = await fetch('/api/bridge/status');
-        const data = await res.json();
-        if (mounted) {
-          setBridgeStatus(data);
-          
-            // Check for new trade execution and sync to Supabase
-          const lastTrade = data.last_trade;
-          if (lastTrade && lastTrade.ticket && lastTrade.ticket !== lastProcessedTicketRef.current) {
-            console.log('New trade detected from bridge:', lastTrade);
-            lastProcessedTicketRef.current = lastTrade.ticket;
-            
-            // Sync to Supabase
-            // Convert MT5 side (BUY/SELL) to db side (buy/sell)
-            const dbSide = lastTrade.type.toLowerCase();
-            
-            const tradeData = {
-              symbol: lastTrade.symbol,
-              side: dbSide,
-              quantity: lastTrade.volume,
-              entry_price: lastTrade.price,
-              status: 'open',
-              created_at: new Date().toISOString(), // Use current time as created_at
-              pnl_net: 0, // Initial PnL
-              pnl_gross: 0,
-              commission: 0,
-              swap: 0,
-              // Store ticket in notes or metadata if needed
-              notes: `MT5 Ticket: ${lastTrade.ticket}`
-            };
 
-            const { error } = await supabase.from('trades').insert(tradeData);
-            
-            if (error) {
-              console.error('Failed to sync trade to Supabase:', error);
-              // Fallback: Could trigger a toast here or local state update
-            } else {
-              console.log('Trade synced to Supabase successfully');
-            }
-          }
+  useEffect(() => {
+    if (!bridgeStatus?.last_trade) return;
+    const lastTrade = bridgeStatus.last_trade;
+
+    if (lastTrade.ticket && lastTrade.ticket !== lastProcessedTicketRef.current) {
+      console.log('New trade detected from bridge:', lastTrade);
+      lastProcessedTicketRef.current = lastTrade.ticket;
+
+      // Sync to Supabase
+      const syncTrade = async () => {
+        const dbSide = lastTrade.type.toLowerCase();
+        const tradeData = {
+          symbol: lastTrade.symbol,
+          side: dbSide,
+          quantity: lastTrade.volume,
+          entry_price: lastTrade.price,
+          status: 'open',
+          created_at: new Date().toISOString(),
+          pnl_net: 0,
+          pnl_gross: 0,
+          commission: 0,
+          swap: 0,
+          notes: `MT5 Ticket: ${lastTrade.ticket}`
+        };
+
+        const { error } = await supabase.from('trades').insert(tradeData);
+        if (error) {
+          console.error('Failed to sync trade to Supabase:', error);
+        } else {
+          console.log('Trade synced to Supabase successfully');
         }
-      } catch (e) {
-        console.error('Bridge status error:', e);
-        if (mounted) setBridgeStatus(prev => prev ? { ...prev, bridge_status: 'disconnected' } : null);
-      }
-    };
-    
-    fetchStatus();
-    const timer = setInterval(fetchStatus, 1000); // Poll every 1s
-    return () => {
-      mounted = false;
-      clearInterval(timer);
-    };
-  }, []);
+      };
+
+      syncTrade();
+    }
+  }, [bridgeStatus]);
 
   const handleTrade = async (action: 'BUY' | 'SELL') => {
     if (executing) return;
@@ -141,12 +124,12 @@ export function TradingViewChart({ initialSymbol = 'EUR_USD', height = 500, clas
           volume: 0.01 // Fixed volume for MVP
         })
       });
-      
+
       const data = await res.json();
       if (!res.ok || data.error) {
         throw new Error(data.error || 'Trade failed');
       }
-      
+
       // Optional: Add toast notification here
       console.log('Trade queued:', data);
     } catch (e) {
@@ -155,8 +138,6 @@ export function TradingViewChart({ initialSymbol = 'EUR_USD', height = 500, clas
       setExecuting(null);
     }
   };
-
-  const isConnected = bridgeStatus?.bridge_status === 'connected' && bridgeStatus?.last_mt5_update?.bid;
 
   // 初始化图表
   useEffect(() => {
@@ -176,6 +157,14 @@ export function TradingViewChart({ initialSymbol = 'EUR_USD', height = 500, clas
       timeScale: {
         borderColor: 'rgba(255, 255, 255, 0.1)',
         timeVisible: true,
+        rightOffset: 10, // Space on the right
+        barSpacing: 12, // Default spacing
+        fixLeftEdge: true,
+        fixRightEdge: false,
+        lockVisibleTimeRangeOnResize: true,
+        rightBarStaysOnScroll: true,
+        visible: true,
+        shiftVisibleRangeOnNewBar: true,
       },
       rightPriceScale: {
         borderColor: 'rgba(255, 255, 255, 0.1)',
@@ -230,18 +219,35 @@ export function TradingViewChart({ initialSymbol = 'EUR_USD', height = 500, clas
 
         const data = await response.json();
         if (data.candles) {
-          const formattedData = data.candles.map((c: any) => ({
-            time: c.time as Time,
-            open: c.open,
-            high: c.high,
-            low: c.low,
-            close: c.close,
-          }));
+          const formattedData = data.candles
+            .map((c: any) => ({
+              time: c.time as Time,
+              open: c.open,
+              high: c.high,
+              low: c.low,
+              close: c.close,
+            }))
+            .sort((a: any, b: any) => (a.time as number) - (b.time as number)); // Ensure ascending order
 
           setChartData(formattedData);
           if (candleSeriesRef.current) {
             candleSeriesRef.current.setData(formattedData);
-            chartRef.current?.timeScale().fitContent();
+            
+            // 设置默认缩放级别和偏移
+            const totalBars = formattedData.length;
+            if (totalBars > 0) {
+               // 增加右侧空白（Right Offset）
+               // Lightweight Charts 的 rightOffset 并不是直接像素值，而是 K 线数量
+               // 为了把最后一根 K 线推到 2/3 处，我们需要设置较大的空白
+               // 假设当前视图宽度能容纳 ~60 根 K 线，我们需要约 20 根 K 线的空白
+               
+               const timeScale = chartRef.current?.timeScale();
+               if (timeScale) {
+                   timeScale.scrollToPosition(30, false); // 负数向左滚，正数向右留白？不，scrollToPosition 的 offset 是从右边缘算的 bar 数量
+                   // 正值 = 右侧留白数量
+                   // 20 根左右的留白通常能达到 2/3 效果（取决于缩放）
+               }
+            }
           }
         }
       } catch (error) {
@@ -325,6 +331,7 @@ export function TradingViewChart({ initialSymbol = 'EUR_USD', height = 500, clas
         color: (sig.type === 'BUY' || sig.type === 'RECLAIM_BUY') ? '#26ba9f' : '#ba3026',
         shape: (sig.type === 'BUY' || sig.type === 'RECLAIM_BUY') ? 'arrowUp' : 'arrowDown',
         text: sig.label,
+        size: 2, // Increase size
       }));
 
       // Use createSeriesMarkers instead of setMarkers for v5
@@ -343,117 +350,88 @@ export function TradingViewChart({ initialSymbol = 'EUR_USD', height = 500, clas
 
   return (
     <div className={`flex flex-col gap-4 w-full ${className}`}>
-      {/* Controls Header */}
-      <div className="flex flex-wrap items-center justify-between gap-4 p-4 rounded-xl bg-white/5 border border-white/5 backdrop-blur-sm">
-        <div className="flex items-center gap-4">
-          <Select
-            value={symbol}
-            onChange={(e) => setSymbol(e.target.value)}
-            className="w-32 h-9 text-sm bg-black/20 border-white/10"
-          >
-            {SYMBOLS.map(s => (
-              <option key={s.value} value={s.value}>{s.label}</option>
-            ))}
-          </Select>
-
-          <div className="flex bg-black/20 rounded-lg p-1 border border-white/10">
-            {PERIODS.map(p => (
-              <button
-                key={p.value}
-                onClick={() => setPeriod(p.value)}
-                className={`px-3 py-1 text-xs font-medium rounded-md transition-all ${period === p.value
-                  ? 'bg-accent-primary text-white shadow-sm'
-                  : 'text-slate-400 hover:text-white hover:bg-white/5'
-                  }`}
-              >
-                {p.label}
-              </button>
-            ))}
-          </div>
-        </div>
-
-        <div className="flex items-center gap-2">
-          {/* Trading Controls */}
-          <div className="hidden md:flex items-center gap-3 mr-2 pr-4 border-r border-white/10">
-            {/* Status Indicator */}
-            <div className={`flex items-center gap-1.5 px-2 py-1 rounded text-xs font-medium transition-colors ${isConnected ? 'bg-green-500/10 text-green-400' : 'bg-red-500/10 text-red-400'}`}>
-              {isConnected ? <Wifi size={14} /> : <WifiOff size={14} />}
-              <span>{isConnected ? 'MT5 连线' : '断开'}</span>
-            </div>
-
-            {/* Price Display */}
-            {isConnected && bridgeStatus?.last_mt5_update && (
-              <div className="flex items-center gap-3 text-sm font-mono">
-                <div className="flex flex-col leading-none">
-                  <span className="text-[10px] text-slate-500">BID</span>
-                  <span className="text-red-400">{bridgeStatus.last_mt5_update.bid?.toFixed(5)}</span>
-                </div>
-                <div className="flex flex-col leading-none">
-                  <span className="text-[10px] text-slate-500">ASK</span>
-                  <span className="text-green-400">{bridgeStatus.last_mt5_update.ask?.toFixed(5)}</span>
-                </div>
-              </div>
-            )}
-
-            {/* Trade Buttons */}
-            <div className="flex items-center gap-2">
-              <Button 
-                size="sm" 
-                variant="outline" 
-                className="bg-red-500/10 border-red-500/20 hover:bg-red-500/20 text-red-400 h-8 px-3 gap-1"
-                onClick={() => handleTrade('SELL')}
-                disabled={!isConnected || !!executing}
-              >
-                {executing === 'SELL' ? <Loader2 className="animate-spin" size={14} /> : <TrendingDown size={14} />}
-                SELL
-              </Button>
-              <Button 
-                size="sm" 
-                variant="outline" 
-                className="bg-green-500/10 border-green-500/20 hover:bg-green-500/20 text-green-400 h-8 px-3 gap-1"
-                onClick={() => handleTrade('BUY')}
-                disabled={!isConnected || !!executing}
-              >
-                {executing === 'BUY' ? <Loader2 className="animate-spin" size={14} /> : <TrendingUp size={14} />}
-                BUY
-              </Button>
-            </div>
-          </div>
-
-          <div className="relative">
-            <Button
-              variant="secondary"
-              size="sm"
-              className={`gap-2 ${showSettings ? 'bg-white/10 text-white' : ''}`}
-              onClick={() => setShowSettings(!showSettings)}
-            >
-              <Settings2 size={16} />
-              指标
-            </Button>
-
-            {/* Indicators Dropdown */}
-            {showSettings && (
-              <div className="absolute top-full right-0 mt-2 w-48 p-3 rounded-xl bg-[#1e293b] border border-white/10 shadow-xl z-50 animate-in fade-in zoom-in-95 duration-200">
-                <div className="space-y-3">
-                  <label className="flex items-center gap-2 text-sm text-slate-300 cursor-pointer hover:text-white">
-                    <Checkbox
-                      checked={indicators.pivotTrend}
-                      onChange={(e) => setIndicators(prev => ({ ...prev, pivotTrend: e.target.checked }))}
-                    />
-                    Pivot Trend Signals (V3)
-                  </label>
-                </div>
-              </div>
-            )}
-          </div>
-
-          {loading && <Loader2 className="animate-spin text-accent-primary" size={20} />}
-        </div>
-      </div>
-
       {/* Chart Container */}
-      <div className="relative w-full rounded-xl overflow-hidden border border-white/5 bg-black/20 backdrop-blur-sm">
+      <div className="relative w-full rounded-2xl overflow-hidden border border-white/5 bg-black/40 backdrop-blur-sm shadow-2xl">
         <div ref={chartContainerRef} className="w-full" style={{ height }} />
+
+        {/* Floating Controls Bar */}
+        <div className="absolute top-2 md:top-4 left-2 md:left-4 right-2 md:right-4 flex flex-wrap items-center justify-between gap-2 md:gap-4 pointer-events-none z-20">
+          {/* Left Group: Symbol & Period */}
+          <div className="flex items-center gap-1 md:gap-2 pointer-events-auto bg-black/60 backdrop-blur-md p-1 md:p-1.5 rounded-lg md:rounded-xl border border-white/10 shadow-lg">
+            <Select
+              value={symbol}
+              onChange={(e) => setSymbol(e.target.value)}
+              className="w-auto min-w-[100px] md:min-w-[140px] h-auto py-1 md:py-1.5 text-xs md:text-sm bg-transparent border-none focus:ring-0 text-white font-medium cursor-pointer"
+            >
+              {activeSymbols && activeSymbols.length > 0 ? (
+                activeSymbols.map((s: string) => (
+                  <option key={s} value={s}>{s}</option>
+                ))
+              ) : (
+                <>
+                  <option value="EUR_USD">EUR/USD</option>
+                  <option value="GBP_USD">GBP/USD</option>
+                  <option value="USD_JPY">USD/JPY</option>
+                  <option value="XAU_USD">XAU/USD</option>
+                </>
+              )}
+            </Select>
+
+            <div className="w-px h-5 md:h-6 bg-white/10"></div>
+
+            <div className="flex gap-0.5 md:gap-1">
+              {([
+                { label: '1M', value: 'M1' as Period },
+                { label: '5M', value: 'M5' as Period },
+                { label: '1H', value: 'H1' as Period },
+                { label: '4H', value: 'H4' as Period },
+                { label: '1D', value: 'D' as Period }
+              ]).map(p => (
+                <button
+                  key={p.value}
+                  onClick={() => setPeriod(p.value)}
+                  className={`px-1.5 md:px-2 py-0.5 md:py-1 text-[10px] md:text-xs font-medium rounded transition-all ${period === p.value
+                    ? 'bg-white/20 text-white'
+                    : 'text-slate-400 hover:text-white hover:bg-white/10'
+                    }`}
+                >
+                  {p.label}
+                </button>
+              ))}
+            </div>
+          </div>
+
+          {/* Right Group: Settings */}
+          <div className="flex items-center gap-2 md:gap-3 pointer-events-auto">
+            {/* Settings */}
+            <div className="relative">
+              <Button
+                variant="secondary"
+                size="sm"
+                className={`h-7 w-7 md:h-9 md:w-9 p-0 rounded-lg md:rounded-xl bg-black/60 backdrop-blur-md border border-white/10 hover:bg-white/10 ${showSettings ? 'text-white' : 'text-slate-400'}`}
+                onClick={() => setShowSettings(!showSettings)}
+              >
+                <Settings2 size={14} className="md:w-[18px] md:h-[18px]" />
+              </Button>
+
+              {/* Indicators Dropdown */}
+              {showSettings && (
+                <div className="absolute top-full right-0 mt-2 w-48 md:w-56 p-3 md:p-4 rounded-xl md:rounded-2xl bg-[#0f172a]/95 border border-white/10 shadow-2xl z-50 animate-in fade-in zoom-in-95 duration-200 backdrop-blur-xl">
+                  <h4 className="text-[10px] md:text-xs font-bold text-slate-500 uppercase mb-2 md:mb-3">Indicators</h4>
+                  <div className="space-y-2 md:space-y-3">
+                    <label className="flex items-center gap-2 md:gap-3 text-xs md:text-sm text-slate-300 cursor-pointer hover:text-white transition-colors">
+                      <Checkbox
+                        checked={indicators.pivotTrend}
+                        onChange={(e) => setIndicators(prev => ({ ...prev, pivotTrend: e.target.checked }))}
+                      />
+                      <span>Pivot Trend (V3)</span>
+                    </label>
+                  </div>
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
 
         {/* Watermark / Loading State */}
         {chartData.length === 0 && !loading && (

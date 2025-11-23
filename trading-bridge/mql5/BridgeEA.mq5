@@ -4,7 +4,7 @@
 //|                                       HTTP Polling Version (MVP) |
 //+------------------------------------------------------------------+
 #property copyright "Copyright 2024, AlphaOS Project"
-#property version   "1.00"
+#property version   "1.10"
 
 input string ApiUrl = "http://api.lootool.cn:8000"; 
 input int PollInterval = 1000;
@@ -38,7 +38,6 @@ void CheckForCommands()
    string referer = NULL;
    
    // GET 请求的标准调用方式
-   // int WebRequest(const string method,const string url,const string cookie,const string referer,int timeout,const char &data[],int data_size,char &result[],string &result_headers)
    int res = WebRequest("GET", ApiUrl + "/commands/pop", cookie, referer, 500, data, 0, result, headers);
    
    if(res == 200)
@@ -48,16 +47,32 @@ void CheckForCommands()
         {
          Print("Received command: ", json);
          
-         // 简单的 JSON 解析逻辑
-         string action = ExtractJsonString(json, "action");
-         string symbol = ExtractJsonString(json, "symbol");
-         double volume = ExtractJsonDouble(json, "volume");
+         string type = ExtractJsonString(json, "type");
          
-         if(volume <= 0) volume = 0.01;
-         if(symbol == "" || symbol == NULL) symbol = Symbol(); // 默认当前品种
-         
-         if(action == "BUY") ExecuteTrade(symbol, ORDER_TYPE_BUY, volume);
-         else if(action == "SELL") ExecuteTrade(symbol, ORDER_TYPE_SELL, volume);
+         if (type == "TRADE" || type == "") { // Default to TRADE if type missing (legacy)
+             string action = ExtractJsonString(json, "action");
+             string symbol = ExtractJsonString(json, "symbol");
+             double volume = ExtractJsonDouble(json, "volume");
+             
+             if(volume <= 0) volume = 0.01;
+             if(symbol == "" || symbol == NULL) symbol = Symbol(); 
+             
+             if(action == "BUY") ExecuteTrade(symbol, ORDER_TYPE_BUY, volume);
+             else if(action == "SELL") ExecuteTrade(symbol, ORDER_TYPE_SELL, volume);
+         }
+         else if (type == "GET_HISTORY") {
+             string req_id = ExtractJsonString(json, "request_id");
+             string symbol = ExtractJsonString(json, "symbol");
+             string tf_str = ExtractJsonString(json, "timeframe");
+             int count = (int)ExtractJsonDouble(json, "count");
+             
+             if(count > 1000) count = 1000; // Limit to 1000 per request
+             if(count <= 0) count = 100;
+             
+             ENUM_TIMEFRAMES tf = StringToTimeframe(tf_str);
+             
+             SendHistoryData(req_id, symbol, tf, count);
+         }
         }
      }
   }
@@ -90,6 +105,57 @@ double ExtractJsonDouble(string json, string key)
    if(end < 0) return 0.0;
    return StringToDouble(StringSubstr(json, start, end - start));
   }
+
+//+------------------------------------------------------------------+
+//| 字符串转时间周期                                                   |
+//+------------------------------------------------------------------+
+ENUM_TIMEFRAMES StringToTimeframe(string tf) {
+   if(tf == "M1" || tf == "PERIOD_M1") return PERIOD_M1;
+   if(tf == "M5" || tf == "PERIOD_M5") return PERIOD_M5;
+   if(tf == "M15" || tf == "PERIOD_M15") return PERIOD_M15;
+   if(tf == "M30" || tf == "PERIOD_M30") return PERIOD_M30;
+   if(tf == "H1" || tf == "PERIOD_H1") return PERIOD_H1;
+   if(tf == "H4" || tf == "PERIOD_H4") return PERIOD_H4;
+   if(tf == "D1" || tf == "PERIOD_D1") return PERIOD_D1;
+   if(tf == "W1" || tf == "PERIOD_W1") return PERIOD_W1;
+   if(tf == "MN1" || tf == "PERIOD_MN1") return PERIOD_MN1;
+   return PERIOD_CURRENT;
+}
+
+//+------------------------------------------------------------------+
+//| 获取历史数据并发送                                                 |
+//+------------------------------------------------------------------+
+void SendHistoryData(string req_id, string symbol, ENUM_TIMEFRAMES tf, int count) {
+    MqlRates rates[];
+    ArraySetAsSeries(rates, true);
+    int copied = CopyRates(symbol, tf, 0, count, rates);
+    
+    if(copied > 0) {
+        // 构建 JSON
+        string json = StringFormat("{\"request_id\":\"%s\",\"symbol\":\"%s\",\"timeframe\":\"%s\",\"count\":%d,\"data\":[", 
+                                   req_id, symbol, EnumToString(tf), copied);
+        
+        for(int i=0; i<copied; i++) {
+            if(i > 0) json += ",";
+            // 使用简单格式以节省空间
+            json += StringFormat("{\"time\":%d,\"open\":%.5f,\"high\":%.5f,\"low\":%.5f,\"close\":%.5f,\"tick_volume\":%d}",
+                                 rates[i].time, rates[i].open, rates[i].high, rates[i].low, rates[i].close, rates[i].tick_volume);
+        }
+        json += "]}";
+        
+        // 发送
+        char data[];
+        StringToCharArray(json, data, 0, StringLen(json), CP_UTF8);
+        char res_data[];
+        string headers = "Content-Type: application/json\r\n";
+        
+        // 增加超时时间到 2000ms，因为数据量较大
+        WebRequest("POST", ApiUrl + "/data/history", headers, 2000, data, res_data, headers);
+        Print("Sent history data: ", copied, " candles for ", symbol);
+    } else {
+        Print("Failed to copy rates for ", symbol);
+    }
+}
 
 //+------------------------------------------------------------------+
 //| 获取正确的填充模式 (解决 4756 错误)                                   |
@@ -138,11 +204,9 @@ void SendStatusUpdate()
      }
    positions_json += "]";
 
-   // 3. 兼容旧字段 (Legacy)
+   // 3. 当前图表报价 (Legacy + Active Symbol)
    double bid = SymbolInfoDouble(Symbol(), SYMBOL_BID);
    double ask = SymbolInfoDouble(Symbol(), SYMBOL_ASK);
-   if(bid <= 0) bid = 1.12345;
-   if(ask <= 0) ask = 1.12355;
    
    string legacy_json = StringFormat("\"symbol\":\"%s\",\"bid\":%.5f,\"ask\":%.5f", 
                               Symbol(), bid, ask);

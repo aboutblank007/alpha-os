@@ -1,17 +1,15 @@
+import { env } from '../env';
+
 /**
  * OANDA API 客户端
  * 用于获取实时外汇和商品价格
  */
 
-const OANDA_API_KEY = process.env.OANDA_API_KEY;
-const OANDA_ACCOUNT_ID = process.env.OANDA_ACCOUNT_ID;
-const OANDA_ENVIRONMENT = process.env.OANDA_ENVIRONMENT || 'practice';
-
-const BASE_URL = OANDA_ENVIRONMENT === 'live' 
+const BASE_URL = env.OANDA_ENVIRONMENT === 'live'
   ? 'https://api-fxtrade.oanda.com'
   : 'https://api-fxpractice.oanda.com';
 
-const STREAM_URL = OANDA_ENVIRONMENT === 'live'
+const STREAM_URL = env.OANDA_ENVIRONMENT === 'live'
   ? 'https://stream-fxtrade.oanda.com'
   : 'https://stream-fxpractice.oanda.com';
 
@@ -21,18 +19,18 @@ const STREAM_URL = OANDA_ENVIRONMENT === 'live'
  */
 export function convertToOandaInstrument(symbol: string): string {
   symbol = symbol.toUpperCase();
-  
+
   // 特殊处理黄金
   if (symbol === 'XAUUSD') return 'XAU_USD';
-  
+
   // 特殊处理白银
   if (symbol === 'XAGUSD') return 'XAG_USD';
-  
+
   // 处理外汇对 (6个字符)
   if (symbol.length === 6) {
     return `${symbol.substring(0, 3)}_${symbol.substring(3, 6)}`;
   }
-  
+
   return symbol;
 }
 
@@ -57,13 +55,14 @@ interface OandaRequestConfig {
  * 发送 OANDA API 请求
  */
 async function oandaRequest(endpoint: string, config: OandaRequestConfig = {}) {
-  if (!OANDA_API_KEY) {
-    throw new Error('OANDA_API_KEY 未配置');
+  if (!env.OANDA_API_KEY) {
+    console.warn('OANDA_API_KEY not configured, skipping request');
+    return null; // Or throw specific error that UI can handle
   }
 
   const url = `${BASE_URL}${endpoint}`;
   const headers = {
-    'Authorization': `Bearer ${OANDA_API_KEY}`,
+    'Authorization': `Bearer ${env.OANDA_API_KEY}`,
     'Content-Type': 'application/json',
     ...config.headers,
   };
@@ -93,11 +92,11 @@ async function oandaRequest(endpoint: string, config: OandaRequestConfig = {}) {
     if (error.name === 'AbortError') {
       throw new Error(`OANDA API 请求超时（10秒）- 可能的原因：网络连接问题或需要 VPN。URL: ${BASE_URL}`);
     }
-    
+
     if (error.cause?.code === 'ENOTFOUND') {
       throw new Error(`无法连接到 OANDA API (${BASE_URL}) - 请检查网络连接。如在中国大陆，可能需要 VPN。`);
     }
-    
+
     if (error.cause?.code === 'ECONNREFUSED') {
       throw new Error(`OANDA API 拒绝连接 (${BASE_URL}) - 请检查防火墙设置。`);
     }
@@ -125,13 +124,13 @@ export interface OandaPrice {
  * @param instruments 交易品种数组，例如 ['USD_JPY', 'EUR_USD', 'XAU_USD']
  */
 export async function getPricing(instruments: string[]): Promise<{ prices: OandaPrice[] }> {
-  if (!OANDA_ACCOUNT_ID) {
-    throw new Error('OANDA_ACCOUNT_ID 未配置');
+  if (!env.OANDA_ACCOUNT_ID) {
+    return { prices: [] };
   }
 
   const instrumentsParam = instruments.join(',');
-  const endpoint = `/v3/accounts/${OANDA_ACCOUNT_ID}/pricing?instruments=${instrumentsParam}`;
-  
+  const endpoint = `/v3/accounts/${env.OANDA_ACCOUNT_ID}/pricing?instruments=${instrumentsParam}`;
+
   return oandaRequest(endpoint);
 }
 
@@ -150,7 +149,7 @@ export interface OandaCandle {
 /**
  * K线周期类型
  */
-export type CandleGranularity = 
+export type CandleGranularity =
   | 'S5' | 'S10' | 'S15' | 'S30'  // 秒级
   | 'M1' | 'M2' | 'M4' | 'M5' | 'M10' | 'M15' | 'M30'  // 分钟级
   | 'H1' | 'H2' | 'H3' | 'H4' | 'H6' | 'H8' | 'H12'  // 小时级
@@ -168,18 +167,19 @@ export async function getCandles(
   count: number = 500
 ): Promise<{ candles: OandaCandle[] }> {
   const endpoint = `/v3/instruments/${instrument}/candles?granularity=${granularity}&count=${count}`;
-  return oandaRequest(endpoint);
+  const response = await oandaRequest(endpoint);
+  return response || { candles: [] };
 }
 
 /**
  * 获取账户信息
  */
 export async function getAccountInfo() {
-  if (!OANDA_ACCOUNT_ID) {
-    throw new Error('OANDA_ACCOUNT_ID 未配置');
+  if (!env.OANDA_ACCOUNT_ID) {
+    return null;
   }
 
-  const endpoint = `/v3/accounts/${OANDA_ACCOUNT_ID}`;
+  const endpoint = `/v3/accounts/${env.OANDA_ACCOUNT_ID}`;
   return oandaRequest(endpoint);
 }
 
@@ -191,9 +191,9 @@ export async function getCurrentPrices(symbols: string[]): Promise<Record<string
   try {
     const oandaInstruments = symbols.map(convertToOandaInstrument);
     const { prices } = await getPricing(oandaInstruments);
-    
+
     const result: Record<string, number> = {};
-    
+
     prices.forEach((price) => {
       const symbol = convertFromOandaInstrument(price.instrument);
       // 使用中间价 (bid + ask) / 2
@@ -201,7 +201,7 @@ export async function getCurrentPrices(symbols: string[]): Promise<Record<string
       const ask = parseFloat(price.closeoutAsk || price.asks[0]?.price || '0');
       result[symbol] = (bid + ask) / 2;
     });
-    
+
     return result;
   } catch (error) {
     console.error('获取 OANDA 价格失败:', error);

@@ -1,67 +1,56 @@
-import { cn } from "@/lib/utils";
-import { ArrowUpRight, ArrowDownRight, Minus } from 'lucide-react';
+import React from 'react';
 
-interface CardProps {
-    children: React.ReactNode;
-    className?: string;
-}
+export interface CardProps extends React.HTMLAttributes<HTMLDivElement> { }
 
-export function Card({ children, className }: CardProps) {
+export function Card({ className, ...props }: CardProps) {
     return (
-        <div className={cn(
-            "glass-panel p-6 rounded-xl relative overflow-hidden",
-            className
-        )}>
-            {children}
-        </div>
+        <div
+            className={`glass-panel rounded-2xl p-6 ${className}`}
+            {...props}
+        />
     );
 }
 
-interface StatCardProps {
+export interface StatCardProps {
     label: string;
-    value: string | number;
+    value: string;
     trend?: number;
     icon?: React.ReactNode;
     subValue?: string;
+    className?: string;
 }
 
-export function StatCard({ label, value, trend, icon, subValue }: StatCardProps) {
-    const isPositive = trend && trend > 0;
-    const isNegative = trend && trend < 0;
-    const isNeutral = trend === 0 || trend === undefined;
+export function StatCard({ label, value, trend, icon, subValue, className }: StatCardProps) {
+    const isPositive = trend ? trend > 0 : true;
 
     return (
-        <Card className="group hover:bg-white/[0.02] transition-colors duration-300">
-            <div className="flex items-start justify-between">
-                <div>
-                    <p className="text-sm font-medium text-slate-500">{label}</p>
-                    <div className="mt-2 flex items-baseline gap-2">
-                        <h3 className="text-2xl font-bold text-white tracking-tight">{value}</h3>
-                        {subValue && <span className="text-xs text-slate-500">{subValue}</span>}
-                    </div>
+        <div className={`glass-panel p-6 rounded-2xl relative overflow-hidden group hover:border-white/10 transition-colors ${className}`}>
+            {/* Background Gradient Glow */}
+            <div className="absolute top-0 right-0 w-32 h-32 bg-accent-primary/5 rounded-full blur-3xl -translate-y-1/2 translate-x-1/2 group-hover:bg-accent-primary/10 transition-colors duration-500"></div>
 
-                    <div className="mt-3 flex items-center gap-2">
-                        <div className={cn(
-                            "flex items-center gap-0.5 text-xs font-medium",
-                            isPositive ? "text-accent-success" :
-                                isNegative ? "text-accent-danger" :
-                                    "text-slate-400"
-                        )}>
-                            {isPositive && <ArrowUpRight size={14} />}
-                            {isNegative && <ArrowDownRight size={14} />}
-                            {isNeutral && <Minus size={14} />}
-                            {trend ? Math.abs(trend).toFixed(1) + '%' : '0.0%'}
+            <div className="relative z-10 flex justify-between items-start">
+                <div>
+                    <p className="text-sm font-medium text-slate-400 mb-1">{label}</p>
+                    <h3 className="text-3xl font-bold text-white tracking-tight">{value}</h3>
+
+                    {(trend !== undefined || subValue) && (
+                        <div className="flex items-center gap-2 mt-2">
+                            {trend !== undefined && (
+                                <span className={`text-xs font-bold px-1.5 py-0.5 rounded ${isPositive ? 'text-accent-success bg-accent-success/10' : 'text-accent-danger bg-accent-danger/10'}`}>
+                                    {isPositive ? '+' : ''}{trend}%
+                                </span>
+                            )}
+                            {subValue && (
+                                <span className="text-xs text-slate-500">{subValue}</span>
+                            )}
                         </div>
-                        <span className="text-xs text-slate-600">较上月</span>
-                    </div>
+                    )}
                 </div>
 
-                {icon && (
-                    <div className="p-2.5 rounded-lg bg-white/5 text-slate-400 group-hover:text-white transition-colors">
-                        {icon}
-                    </div>
-                )}
+                <div className={`p-3 rounded-xl ${isPositive ? 'bg-accent-primary/10 text-accent-primary' : 'bg-accent-danger/10 text-accent-danger'} ring-1 ring-white/5 group-hover:scale-110 transition-transform duration-300`}>
+                    {icon}
+                </div>
             </div>
-        </Card>
+        </div>
     );
 }

@@ -436,18 +436,18 @@ export function calculatePivotTrendSignals(data: OHLC[], settings: IndicatorSett
 
         // Record Signals
         if (validBuy) {
-            signals.push({ time: data[i].time, type: 'BUY', price: low, label: '买入' });
+            signals.push({ time: data[i].time, type: 'BUY', price: low, label: `买入 @ ${close}` });
             lastBuyBar = i;
         } else if (reclaimBuySig) {
-            signals.push({ time: data[i].time, type: 'RECLAIM_BUY', price: low, label: 'Reclaim' });
+            signals.push({ time: data[i].time, type: 'RECLAIM_BUY', price: low, label: `Reclaim @ ${close.toFixed(5)}` });
             lastBuyBar = i;
         }
 
         if (validSell) {
-            signals.push({ time: data[i].time, type: 'SELL', price: high, label: '卖出' });
+            signals.push({ time: data[i].time, type: 'SELL', price: high, label: `卖出 @ ${close}` });
             lastSellBar = i;
         } else if (reclaimSellSig) {
-            signals.push({ time: data[i].time, type: 'RECLAIM_SELL', price: high, label: 'Reclaim' });
+            signals.push({ time: data[i].time, type: 'RECLAIM_SELL', price: high, label: `Reclaim @ ${close.toFixed(5)}` });
             lastSellBar = i;
         }
     }
