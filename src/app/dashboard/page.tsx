@@ -13,6 +13,10 @@ import { RiskAlerts } from '@/components/RiskAlerts';
 import { supabase, type Trade } from '@/lib/supabase';
 import { Button } from '@/components/ui/Button';
 import { Modal } from '@/components/ui/Modal';
+import { TradingViewChart } from '@/components/charts/TradingViewChart';
+import { DndContext, closestCenter, KeyboardSensor, PointerSensor, useSensor, useSensors, DragOverlay, defaultDropAnimationSideEffects, DragStartEvent, DragEndEvent } from '@dnd-kit/core';
+import { arrayMove, SortableContext, sortableKeyboardCoordinates, rectSortingStrategy } from '@dnd-kit/sortable';
+import { SortableItem } from '@/components/dashboard/SortableItem';
 
 interface DashboardStats {
     totalPnL: number;
@@ -25,7 +29,7 @@ interface DashboardStats {
 
 type Period = '1W' | '1M' | '3M' | 'YTD' | 'ALL';
 type ConfirmKind = 'export' | 'share' | 'reset' | null;
-interface TagItem { date: string; label: string }
+interface TagItem { id: string; date: string; label: string }
 
 export default function DashboardPage() {
     const [trades, setTrades] = useState<Trade[]>([]);
@@ -42,13 +46,26 @@ export default function DashboardPage() {
     const [tags, setTags] = useState<TagItem[]>([]);
     const [confirm, setConfirm] = useState<ConfirmKind>(null);
     const [workspace, setWorkspace] = useState<string>('默认工作区');
-    
+
     // Default layout with new components
     const [layout, setLayout] = useState<string[]>(() => {
-        const saved = typeof window !== 'undefined' ? localStorage.getItem('alphaos_layout_v2') : null;
-        return saved ? JSON.parse(saved) : ['chart', 'symbols', 'orders', 'insights', 'sentiment', 'alerts', 'recent'];
+        const saved = typeof window !== 'undefined' ? localStorage.getItem('alphaos_layout_v3') : null;
+        return saved ? JSON.parse(saved) : ['market', 'chart', 'symbols', 'orders', 'insights', 'sentiment', 'alerts', 'recent'];
     });
-    
+
+    const [activeId, setActiveId] = useState<string | null>(null);
+
+    const sensors = useSensors(
+        useSensor(PointerSensor, {
+            activationConstraint: {
+                distance: 8, // 8px movement required to start drag, prevents accidental drags on clicks
+            },
+        }),
+        useSensor(KeyboardSensor, {
+            coordinateGetter: sortableKeyboardCoordinates,
+        })
+    );
+
     const logsRef = useRef<Array<{ time: number; action: string }>>([]);
 
     // Derived State
@@ -175,7 +192,7 @@ export default function DashboardPage() {
         });
         setEquityData(curve);
     }
-    
+
     // Risk alerts logic moved to component, but we need to trigger audio here if needed or move audio to component?
     // The AudioContext logic was in useEffect dependent on alerts.
     // For now, let's keep the sound effect logic simple or move it. 
@@ -203,7 +220,7 @@ export default function DashboardPage() {
                 g.connect(ctx.destination);
                 o.start();
                 setTimeout(() => o.stop(), 300);
-            } catch {}
+            } catch { }
         }
     }, [activeAlerts]);
 
@@ -212,7 +229,8 @@ export default function DashboardPage() {
     }
 
     function addTag(date: string, label: string) {
-        setTags(prev => [...prev, { date, label }]);
+        const newTag = { id: Date.now().toString(), date, label };
+        setTags(prev => [...prev, newTag]);
         logsRef.current.push({ time: Date.now(), action: `add-tag:${date}:${label}` });
         localStorage.setItem('alphaos_logs', JSON.stringify(logsRef.current));
     }
@@ -234,7 +252,7 @@ export default function DashboardPage() {
         const data = { title: 'AlphaOS Dashboard', text: 'My trading dashboard snapshot', url: window.location.href };
         const nav = navigator as Navigator & { share?: (p: { title: string; text: string; url: string }) => Promise<void> };
         if (nav.share) {
-            try { await nav.share(data); } catch {}
+            try { await nav.share(data); } catch { }
         } else {
             await navigator.clipboard.writeText(data.url);
         }
@@ -243,28 +261,124 @@ export default function DashboardPage() {
     }
 
     function resetLayout() {
-        const defaultLayout = ['chart', 'symbols', 'orders', 'insights', 'sentiment', 'alerts', 'recent'];
+        const defaultLayout = ['market', 'chart', 'symbols', 'orders', 'insights', 'sentiment', 'alerts', 'recent'];
         setLayout(defaultLayout);
-        localStorage.setItem('alphaos_layout_v2', JSON.stringify(defaultLayout));
+        localStorage.setItem('alphaos_layout_v3', JSON.stringify(defaultLayout));
         logsRef.current.push({ time: Date.now(), action: 'reset-layout' });
         localStorage.setItem('alphaos_logs', JSON.stringify(logsRef.current));
     }
 
-    function onDragStart(e: React.DragEvent<HTMLDivElement>, key: string) {
-        e.dataTransfer.setData('text/plain', key);
+    function handleDragStart(event: DragStartEvent) {
+        setActiveId(event.active.id as string);
     }
-    function onDrop(e: React.DragEvent<HTMLDivElement>, target: string) {
-        const src = e.dataTransfer.getData('text/plain');
-        if (!src || src === target) return;
-        const order = [...layout];
-        const si = order.indexOf(src), ti = order.indexOf(target);
-        if (si === -1 || ti === -1) return;
-        order.splice(si, 1);
-        order.splice(ti, 0, src);
-        setLayout(order);
-        localStorage.setItem('alphaos_layout_v2', JSON.stringify(order));
+
+    function handleDragEnd(event: DragEndEvent) {
+        const { active, over } = event;
+
+        if (over && active.id !== over.id) {
+            setLayout((items) => {
+                const oldIndex = items.indexOf(active.id as string);
+                const newIndex = items.indexOf(over.id as string);
+                const newLayout = arrayMove(items, oldIndex, newIndex);
+                localStorage.setItem('alphaos_layout_v3', JSON.stringify(newLayout));
+                return newLayout;
+            });
+        }
+
+        setActiveId(null);
     }
-    function allowDrop(e: React.DragEvent<HTMLDivElement>) { e.preventDefault(); }
+
+    const dropAnimation = {
+        sideEffects: defaultDropAnimationSideEffects({
+            styles: {
+                active: {
+                    opacity: '0.5',
+                },
+            },
+        }),
+    };
+
+    const renderWidget = (key: string, isOverlay = false) => {
+        // 根据组件类型定义响应式列跨度
+        const getColSpan = (componentKey: string) => {
+            if (isOverlay) return 'col-span-1'; // Overlay always fits content or fixed width? Actually overlay mimics the item.
+            // For overlay, we might want to force a specific width or let it inherit. 
+            // But grid classes won't work well in overlay portal unless we copy the grid context or set explicit dimensions.
+            // For simplicity, the overlay will just render the content.
+
+            switch (componentKey) {
+                case 'market':
+                case 'chart':
+                    return 'col-span-1 md:col-span-2 lg:col-span-3';
+                case 'orders':
+                case 'recent':
+                    return 'col-span-1 md:col-span-2 lg:col-span-4';
+                default:
+                    return 'col-span-1';
+            }
+        };
+
+        const getHeight = (componentKey: string) => {
+            switch (componentKey) {
+                case 'market':
+                case 'chart':
+                case 'symbols':
+                    return 'h-[500px]';
+                case 'orders':
+                case 'recent':
+                    return 'h-[400px]';
+                case 'insights':
+                case 'sentiment':
+                case 'alerts':
+                    return 'h-[300px]';
+                default:
+                    return 'h-[300px]';
+            }
+        };
+
+        const colSpanClass = getColSpan(key);
+        const heightClass = getHeight(key);
+        const baseClass = `bg-transparent ${colSpanClass} ${heightClass}`;
+        // If overlay, we might want to remove col-span and just give it a fixed width or similar to the source.
+        // But for now let's keep it simple.
+
+        const content = (() => {
+            switch (key) {
+                case 'market':
+                    return <TradingViewChart className="h-full" height={500} />;
+                case 'chart':
+                    return (
+                        <>
+                            <EquityCurve data={equityData} period={period} overlays={overlays} tags={tags} onPeriodChange={setPeriod} onToggleOverlay={toggleOverlay} />
+                            <div className="mt-3 flex items-center gap-2">
+                                <Button variant="outline" onClick={() => addTag(equityData.slice(-1)[0]?.date ?? '', '策略标记')}>添加策略标记</Button>
+                            </div>
+                        </>
+                    );
+                case 'symbols':
+                    return <SymbolPerformance trades={closedTrades} />;
+                case 'orders':
+                    return <OngoingOrders orders={openTrades} />;
+                case 'recent':
+                    return <RecentTrades trades={closedTrades} />;
+                case 'insights':
+                    return <TradingInsights trades={trades} />;
+                case 'sentiment':
+                    return <SentimentAnalysis trades={trades} />;
+                case 'alerts':
+                    return <RiskAlerts stats={stats} onResetLayout={() => setConfirm('reset')} />;
+                default:
+                    return null;
+            }
+        })();
+
+        return (
+            <div className={`${isOverlay ? 'h-full w-full' : baseClass} ${isOverlay ? 'shadow-2xl scale-105 cursor-grabbing' : ''}`}>
+                {/* We wrap content in a div to ensure height is respected if needed, but components usually handle it */}
+                {content}
+            </div>
+        );
+    };
 
     if (loading) {
         return (
@@ -324,147 +438,66 @@ export default function DashboardPage() {
                 </div>
             </div>
 
-            {/* Bento Grid Layout with drag & drop */}
-            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6 auto-rows-min">
-                {/* Stats - Fixed */}
-                <div className="col-span-1 animate-fade-in-up" style={{ animationDelay: '0.1s' }}>
-                    <StatCard
-                        label="净盈亏"
-                        value={`$${stats.totalPnL.toFixed(2)}`}
-                        trend={stats.totalPnL > 0 ? 8.0 : -5.0}
-                        icon={<DollarSign size={24} />}
-                        subValue="今日 +$1,240"
-                    />
+            {/* Bento Grid Layout with dnd-kit */}
+            <DndContext
+                sensors={sensors}
+                collisionDetection={closestCenter}
+                onDragStart={handleDragStart}
+                onDragEnd={handleDragEnd}
+            >
+                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6 auto-rows-min">
+                    {/* Stats - Fixed */}
+                    <div className="col-span-1 animate-fade-in-up" style={{ animationDelay: '0.1s' }}>
+                        <StatCard
+                            label="净盈亏"
+                            value={`$${stats.totalPnL.toFixed(2)}`}
+                            trend={stats.totalPnL > 0 ? 8.0 : -5.0}
+                            icon={<DollarSign size={24} />}
+                            subValue="今日 +$1,240"
+                        />
+                    </div>
+                    <div className="col-span-1 animate-fade-in-up" style={{ animationDelay: '0.15s' }}>
+                        <StatCard
+                            label="胜率"
+                            value={`${stats.winRate.toFixed(1)}%`}
+                            trend={2.5}
+                            icon={<Target size={24} />}
+                            subValue="最近 20 笔交易"
+                        />
+                    </div>
+                    <div className="col-span-1 animate-fade-in-up" style={{ animationDelay: '0.2s' }}>
+                        <StatCard
+                            label="最大回撤"
+                            value={`${(stats.maxDrawdown ?? 0).toFixed(1)}%`}
+                            trend={-(stats.maxDrawdown ?? 0)}
+                            icon={<Activity size={24} />}
+                            subValue="基于已平仓交易"
+                        />
+                    </div>
+                    <div className="col-span-1 animate-fade-in-up" style={{ animationDelay: '0.25s' }}>
+                        <StatCard
+                            label="执行效率"
+                            value={`${(stats.executionEfficiency ?? 0).toFixed(0)}%`}
+                            icon={<TrendingUp size={24} />}
+                            subValue="综合评分"
+                        />
+                    </div>
+
+                    <SortableContext items={layout} strategy={rectSortingStrategy}>
+                        {layout.map((key) => (
+                            <SortableItem key={key} id={key} className={renderWidget(key).props.className}>
+                                {renderWidget(key).props.children}
+                            </SortableItem>
+                        ))}
+                    </SortableContext>
                 </div>
-                <div className="col-span-1 animate-fade-in-up" style={{ animationDelay: '0.15s' }}>
-                    <StatCard
-                        label="胜率"
-                        value={`${stats.winRate.toFixed(1)}%`}
-                        trend={2.5}
-                        icon={<Target size={24} />}
-                        subValue="最近 20 笔交易"
-                    />
-                </div>
-                <div className="col-span-1 animate-fade-in-up" style={{ animationDelay: '0.2s' }}>
-                    <StatCard
-                        label="最大回撤"
-                        value={`${(stats.maxDrawdown ?? 0).toFixed(1)}%`}
-                        trend={-(stats.maxDrawdown ?? 0)}
-                        icon={<Activity size={24} />}
-                        subValue="基于已平仓交易"
-                    />
-                </div>
-                <div className="col-span-1 animate-fade-in-up" style={{ animationDelay: '0.25s' }}>
-                    <StatCard
-                        label="执行效率"
-                        value={`${(stats.executionEfficiency ?? 0).toFixed(0)}%`}
-                        icon={<TrendingUp size={24} />}
-                        subValue="综合评分"
-                    />
-                </div>
 
-                {layout.map((key, index) => {
-                    const getCommonProps = (colSpanClass: string, heightClass: string) => ({
-                        draggable: true,
-                        onDragStart: (e: React.DragEvent<HTMLDivElement>) => onDragStart(e, key),
-                        onDragOver: allowDrop,
-                        onDrop: (e: React.DragEvent<HTMLDivElement>) => onDrop(e, key),
-                        className: `animate-fade-in-up bg-transparent ${colSpanClass} ${heightClass}`
-                    });
+                <DragOverlay dropAnimation={dropAnimation}>
+                    {activeId ? renderWidget(activeId, true) : null}
+                </DragOverlay>
+            </DndContext>
 
-                    // 根据组件类型定义响应式列跨度
-                    const getColSpan = (componentKey: string) => {
-                        switch (componentKey) {
-                            case 'chart':
-                                // 图表组件：移动端全宽，中等屏幕全宽，大屏幕占3列
-                                return 'col-span-1 md:col-span-2 lg:col-span-3';
-                            case 'orders':
-                            case 'recent':
-                                // 订单和交易记录：移动端全宽，中等屏幕全宽，大屏幕占4列（全宽）
-                                return 'col-span-1 md:col-span-2 lg:col-span-4';
-                            case 'symbols':
-                            case 'insights':
-                            case 'sentiment':
-                            case 'alerts':
-                                // 其他组件：移动端全宽，中等屏幕1列，大屏幕1列
-                                return 'col-span-1';
-                            default:
-                                return 'col-span-1';
-                        }
-                    };
-
-                    const getHeight = (componentKey: string) => {
-                        switch (componentKey) {
-                            case 'chart':
-                            case 'symbols':
-                                return 'h-[500px]';
-                            case 'orders':
-                            case 'recent':
-                                return 'h-[400px]';
-                            case 'insights':
-                            case 'sentiment':
-                            case 'alerts':
-                                return 'h-[300px]';
-                            default:
-                                return 'h-[300px]';
-                        }
-                    };
-
-                    const colSpanClass = getColSpan(key);
-                    const heightClass = getHeight(key);
-
-                    switch (key) {
-                        case 'chart':
-                            return (
-                                <div key={key} {...getCommonProps(colSpanClass, heightClass)}>
-                                    <EquityCurve data={equityData} period={period} overlays={overlays} tags={tags} onPeriodChange={setPeriod} onToggleOverlay={toggleOverlay} />
-                                    <div className="mt-3 flex items-center gap-2">
-                                        <Button variant="outline" onClick={() => addTag(equityData.slice(-1)[0]?.date ?? '', '策略标记')}>添加策略标记</Button>
-                                    </div>
-                                </div>
-                            );
-                        case 'symbols':
-                            return (
-                                <div key={key} {...getCommonProps(colSpanClass, heightClass)}>
-                                    <SymbolPerformance trades={closedTrades} />
-                                </div>
-                            );
-                        case 'orders':
-                            return (
-                                <div key={key} {...getCommonProps(colSpanClass, heightClass)}>
-                                    <OngoingOrders orders={openTrades} />
-                                </div>
-                            );
-                        case 'recent':
-                            return (
-                                <div key={key} {...getCommonProps(colSpanClass, heightClass)}>
-                                    <RecentTrades trades={closedTrades} />
-                                </div>
-                            );
-                         case 'insights':
-                            return (
-                                <div key={key} {...getCommonProps(colSpanClass, heightClass)}>
-                                    <TradingInsights trades={trades} />
-                                </div>
-                            );
-                        case 'sentiment':
-                            return (
-                                <div key={key} {...getCommonProps(colSpanClass, heightClass)}>
-                                    <SentimentAnalysis trades={trades} />
-                                </div>
-                            );
-                        case 'alerts':
-                            return (
-                                <div key={key} {...getCommonProps(colSpanClass, heightClass)}>
-                                    <RiskAlerts stats={stats} onResetLayout={() => setConfirm('reset')} />
-                                </div>
-                            );
-                        default:
-                            return null;
-                    }
-                })}
-            </div>
-
+            {/* Modal */}
             <Modal
                 open={confirm !== null}
                 onOpenChange={(o) => setConfirm(o ? confirm : null)}

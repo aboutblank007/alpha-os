@@ -10,14 +10,53 @@ interface OngoingOrdersProps {
 const CONTRACT_SPECS: { [key: string]: { pipValueMultiplier: number } } = {
     'JPY': { pipValueMultiplier: 1000 },
     'XAU': { pipValueMultiplier: 100 },
+    'BTC': { pipValueMultiplier: 1 },
     'DEFAULT_FX': { pipValueMultiplier: 100000 },
 };
 
 export function OngoingOrders({ orders }: OngoingOrdersProps) {
     // 存储实时价格数据 { symbol: price }
     const [marketData, setMarketData] = useState<Record<string, number>>({});
+    // 存储从 Bridge 获取的持仓数据（包含精准 PnL）
+    const [bridgePositions, setBridgePositions] = useState<Record<string, any>>({});
     const [isConnected, setIsConnected] = useState(true);
     const [lastUpdate, setLastUpdate] = useState<Date>(new Date());
+
+    // 获取 Bridge 状态（精准 PnL）
+    useEffect(() => {
+        const fetchBridgeStatus = async () => {
+            try {
+                const res = await fetch('/api/bridge/status');
+                if (!res.ok) return;
+                const data = await res.json();
+                
+                if (data.positions && Array.isArray(data.positions)) {
+                    // 转换为 ticket 或 symbol 索引的 map
+                    // 由于我们现在的 orders 列表来自 Supabase，可能没有 ticket 信息
+                    // 我们尝试用 symbol + side 匹配，或者假设同时只有一个同向持仓
+                    // 更好的方式是 Supabase 里存了 ticket。我们在之前的 update 中已经存到了 notes 里。
+                    
+                    const posMap: Record<string, any> = {};
+                    data.positions.forEach((p: any) => {
+                        // 尝试用 "Symbol_Type" 作为 key，例如 "EURUSD_BUY"
+                        // 或者直接用 ticket 如果我们能从 order.notes 解析出来
+                        const key = `${p.symbol}_${p.type}`;
+                        // 如果有多个同向持仓，这里会覆盖，但作为临时方案足够了
+                        posMap[key] = p;
+                        // 也存一份 ticket 索引
+                        if (p.ticket) posMap[`TICKET_${p.ticket}`] = p;
+                    });
+                    setBridgePositions(posMap);
+                }
+            } catch (e) {
+                console.error('Fetch bridge status failed:', e);
+            }
+        };
+
+        fetchBridgeStatus();
+        const interval = setInterval(fetchBridgeStatus, 1000);
+        return () => clearInterval(interval);
+    }, []);
 
     // 获取实时价格的函数
     const fetchPrices = useCallback(async () => {
@@ -134,27 +173,44 @@ ${JSON.stringify(errorData, null, 2)}
                     </thead>
                     <tbody className="divide-y divide-white/5">
                         {orders.map((order) => {
-                            // 获取当前市场价格
-                            const currentPrice = marketData[order.symbol] ?? order.entry_price;
-                            const diff = currentPrice - order.entry_price;
-                            
-                            // 根据品种计算盈亏
+                            // 优先尝试从 Bridge 获取精准 PnL
                             let pnl = 0;
-                            const symbolUpper = order.symbol.toUpperCase();
-
-                            if (symbolUpper.includes('JPY')) {
-                                // JPY 货币对
-                                pnl = diff * order.quantity * CONTRACT_SPECS.JPY.pipValueMultiplier;
-                            } else if (symbolUpper.includes('XAU')) {
-                                // 黄金
-                                pnl = diff * order.quantity * CONTRACT_SPECS.XAU.pipValueMultiplier;
-                            } else {
-                                // 其他外汇对
-                                pnl = diff * order.quantity * CONTRACT_SPECS.DEFAULT_FX.pipValueMultiplier;
+                            let isRealPnl = false;
+                            
+                            // 解析 Ticket (如果存在)
+                            let ticketMatch = null;
+                            if (order.notes && order.notes.includes('Ticket: ')) {
+                                const ticket = order.notes.split('Ticket: ')[1];
+                                ticketMatch = bridgePositions[`TICKET_${ticket}`];
                             }
                             
-                            // 卖单需要反转盈亏
-                            if (order.side === 'sell') pnl = -pnl;
+                            // 如果没有 Ticket 匹配，尝试 Symbol+Side 模糊匹配
+                            if (!ticketMatch) {
+                                const matchKey = `${order.symbol}_${order.side.toUpperCase()}`;
+                                ticketMatch = bridgePositions[matchKey];
+                            }
+
+                            if (ticketMatch) {
+                                pnl = ticketMatch.pnl;
+                                isRealPnl = true;
+                            } else {
+                                // 降级：使用本地估算
+                                const currentPrice = marketData[order.symbol] ?? order.entry_price;
+                                const diff = currentPrice - order.entry_price;
+                                const symbolUpper = order.symbol.toUpperCase();
+
+                                if (symbolUpper.includes('JPY')) {
+                                    pnl = diff * order.quantity * CONTRACT_SPECS.JPY.pipValueMultiplier;
+                                } else if (symbolUpper.includes('XAU')) {
+                                    pnl = diff * order.quantity * CONTRACT_SPECS.XAU.pipValueMultiplier;
+                                } else if (symbolUpper.includes('BTC')) {
+                                    pnl = diff * order.quantity * CONTRACT_SPECS.BTC.pipValueMultiplier;
+                                } else {
+                                    pnl = diff * order.quantity * CONTRACT_SPECS.DEFAULT_FX.pipValueMultiplier;
+                                }
+                                
+                                if (order.side === 'sell') pnl = -pnl;
+                            }
 
                             return (
                                 <tr
@@ -188,8 +244,8 @@ ${JSON.stringify(errorData, null, 2)}
                                             <span className={`text-xs font-mono font-bold ${pnl >= 0 ? 'text-accent-success' : 'text-accent-danger'}`}>
                                                 {pnl >= 0 ? '+' : ''}{pnl.toFixed(2)}
                                             </span>
-                                            <span className="inline-flex items-center px-1.5 py-0.5 rounded text-[9px] font-medium bg-accent-primary/10 text-accent-primary uppercase tracking-wide animate-pulse">
-                                                实时
+                                            <span className={`inline-flex items-center px-1.5 py-0.5 rounded text-[9px] font-medium ${isRealPnl ? 'bg-purple-500/10 text-purple-400' : 'bg-accent-primary/10 text-accent-primary'} uppercase tracking-wide animate-pulse`}>
+                                                {isRealPnl ? 'MT5' : '估算'}
                                             </span>
                                         </div>
                                     </td>

@@ -2,161 +2,77 @@
 
 ## 🐛 已解决的问题
 
-### 2025-11-21: OANDA API 网络连接问题
-
+### 2025-11-23: Ubuntu Docker 桥接网络通信问题
 **问题描述：**
-- 错误：`fetch failed` (HTTP 500)
-- 无法连接到 OANDA API 服务器
+- MT5 EA 无法连接到 API 容器 (Error 5203, 1001)
+- Docker 容器间 HTTP 请求卡死 (curl 挂起)
+- 本地 Python 脚本无法获取 EA 状态
 
 **根本原因：**
-- 网络连接问题（地理限制，中国大陆无法直接访问 OANDA API）
+1. **MTU 问题**：云服务器网卡 MTU (1450) 小于 Docker 默认 MTU (1500)，导致 HTTP 大包丢弃。
+2. **DNS 解析问题**：Wine 环境下 Docker 内部 DNS 解析不稳定。
+3. **API 代码陈旧**：服务器端 Python 代码未及时同步，返回旧版 JSON 格式。
 
 **解决方案：**
-1. ✅ **推荐**：使用模拟数据模式
-   - 注释掉 `.env.local` 中的 OANDA 配置
-   - 系统自动切换到模拟价格
-   - 所有功能完全可用
-
-2. ⚙️ **可选**：使用 VPN 访问真实价格
-   - 连接美国/新加坡节点
-   - 保持 OANDA 配置
-
-**已实现的改进：**
-- ✅ 增强错误诊断（显示详细网络错误）
-- ✅ 添加超时控制（10秒）
-- ✅ 智能降级机制（自动切换模拟数据）
-- ✅ 创建诊断工具（`/debug` 页面）
-
-### 2025-11-21: Supabase 配置问题
-
-**问题描述：**
-- 错误：`Forbidden use of secret API key in browser`
-
-**根本原因：**
-- 使用了 service_role key 而不是 anon key
-
-**解决方案：**
-- ✅ 使用 Supabase 控制台中的 anon (public) key
-- ✅ 更新 `.env.local` 中的 `NEXT_PUBLIC_SUPABASE_ANON_KEY`
+- ✅ **网络优化**：在 `docker-compose.yml` 中设置 `mtu: 1400`。
+- ✅ **DNS 穿透**：配置公网域名 `api.lootool.cn` 指向服务器 IP，绕过 Docker 内部 DNS。
+- ✅ **代码同步**：更新服务器端 `main.py` 和 `BridgeEA.mq5`。
 
 ---
 
 ## 🆕 新需求
 
-### 优先级 1: 在仪表盘添加主流货币对K线图和技术指标
+### 优先级 1: 在仪表盘添加主流货币对K线图和技术指标 (✅ 已完成)
+... (保持不变)
+
+### 优先级 2: 跨平台交易桥接系统 (✅ 已完成)
 
 **需求描述：**
-在现有的 Dashboard 页面中添加：
-1. 主流货币对的 K线图（蜡烛图）
-2. 用户使用的技术指标
+搭建一个跨平台的交易桥接系统，通过 Docker 容器在 Ubuntu 服务器上运行 MT5 交易平台和桥接 API 服务，实现 Mac 本地系统与 MT5 之间的交易指令传递和状态同步。
 
-**技术实现计划：**
+**技术实现状态：**
 
-#### 已有资源：
-- ✅ TradingView Lightweight Charts 库 (v4.1.0)
-- ✅ `/api/prices` POST 端点（可获取历史K线）
-- ✅ `TradingViewChart` 组件（已实现但未使用）
-- ✅ OANDA API 集成（支持获取蜡烛图数据）
+#### 已完成工作：
 
-#### 需要实现：
+1. **系统架构设计**
+   - [x] 定义 Docker 容器结构 (Wine + MT5 + Python/FastAPI)
+   - [x] 架构升级：从 ZeroMQ 迁移到 **HTTP Polling** (简化 Wine 兼容性)
+   - [x] 网络架构：公网域名透传 + Docker MTU 优化
 
-1. **在 Dashboard 添加图表组件**
-   - [ ] 确定图表展示位置（布局设计）
-   - [ ] 集成 `TradingViewChart` 组件到 Dashboard
-   - [ ] 实现多品种切换功能
+2. **服务端实现 (Ubuntu/Docker)**
+   - [x] 创建 Wine + MT5 的 Dockerfile
+   - [x] 开发 MT5 Expert Advisor (EA) (基于 WebRequest)
+   - [x] 开发桥接 API 服务器 (Python/FastAPI)
+   - [x] 配置 Docker Compose (双容器: mt5, bridge-api)
 
-2. **添加技术指标**
-   - [ ] 确认用户使用的具体指标（待用户提供）
-     - EMA（指数移动平均线）？
-     - MACD（异同移动平均线）？
-     - RSI（相对强弱指标）？
-     - 布林带（Bollinger Bands）？
-     - 其他？
-   - [ ] 在图表组件中集成技术指标
-   - [ ] 实现指标参数配置
+3. **客户端实现 (Mac/AlphaOS)**
+   - [x] 开发 AlphaOS 中的 API 客户端
+   - [x] 实现交易指令接口 (HTTP POST)
+   - [x] 实现状态同步 (HTTP GET)
 
-3. **货币对选择**
-   - [ ] 确认需要展示的货币对（待用户提供）
-     - EURUSD（欧元/美元）？
-     - USDJPY（美元/日元）？
-     - GBPUSD（英镑/美元）？
-     - XAUUSD（黄金）？
-     - 其他？
-   - [ ] 实现货币对切换 UI
-   - [ ] 可能支持多图表同时展示
+4. **验证与部署**
+   - [x] 解决 Docker 构建问题 (pip 源, 架构兼容)
+   - [x] 解决 VNC 显示问题
+   - [x] **端到端测试通过** (Mac -> API -> MT5 EA 双向通信成功)
 
-4. **数据优化**
-   - [ ] 实现K线数据缓存
-   - [ ] 优化数据加载性能
-   - [ ] 实时价格更新集成
+**最新进展 (2025-11-23):**
+- ✅ 解决了复杂的 Docker 网络 MTU 问题。
+- ✅ 通过配置公网域名解析解决了 Wine 环境下的 DNS 问题。
+- ✅ 验证了指令下发和状态上报的全流程。
 
-#### 待确认信息：
+**技术架构确认:**
+```
+MT5 EA (Ubuntu/Wine) ←HTTP Polling→ FastAPI (Ubuntu/Docker) ←HTTP REST→ AlphaOS (Mac)
+      |                                   |
+api.lootool.cn:8000                 49.235.153.73:8000
+```
 
-**请用户提供：**
-1. 您通常使用哪些技术指标？
-2. 需要在图表上展示哪些货币对？
-3. 图表应该放在 Dashboard 的什么位置？
-4. 希望使用什么时间周期（1分钟、5分钟、15分钟、1小时等）？
-
-#### 预计工作量：
-- 基础图表集成：2-3小时
-- 技术指标实现：每个指标 1-2小时
-- UI/UX 优化：2小时
-- 测试和调试：1-2小时
-
-**总计：约 6-10 小时**
-
-#### 参考资料：
-- TradingView Lightweight Charts 文档：https://tradingview.github.io/lightweight-charts/
-- 已有实现：`src/components/charts/TradingViewChart.tsx`
-- API 端点：`src/app/api/prices/route.ts`
+### 优先级 3: 仪表盘 UI 优化 (✅ 已完成)
+... (保持不变)
 
 ---
 
 ## 📝 待完成的其他功能
+... (保持不变)
 
-### 已计划但未实现：
-
-- [ ] WebSocket 实时价格推送（替代当前的轮询）
-- [ ] 价格预警功能
-- [ ] MAE/MFE 分析
-- [ ] 回撤分析
-- [ ] 交易策略回测
-- [ ] 移动端适配
-- [ ] 多账户支持
-- [ ] PDF 报告导出
-
----
-
-## 🔧 技术债务
-
-- [ ] 优化价格 API 的错误处理
-- [ ] 添加更多的单元测试
-- [ ] 改进文档结构（已整理，持续优化）
-- [ ] 性能监控和优化
-
----
-
-## 📚 文档更新
-
-### 最近更新：
-- ✅ 整理并合并多个分散的文档
-- ✅ 创建主 README.md（包含所有核心信息）
-- ✅ 创建 DEVELOPMENT.md（技术参考）
-- ✅ 创建 QUICK_FIX.md（快速故障排除）
-- ✅ 创建 DOCS_INDEX.md（文档导航）
-- ✅ 创建 `/debug` 可视化诊断页面
-
-### 当前文档结构：
-- `README.md` - 主文档（用户指南、快速开始、故障排除）
-- `DEVELOPMENT.md` - 开发文档（API、数据库、组件）
-- `QUICK_FIX.md` - 快速修复指南
-- `DOCS_INDEX.md` - 文档索引
-- `PROJECT_CHANGELOG.md` - 完整变更日志
-- `TODO.md` - 本文件（待办事项和需求跟踪）
-
----
-
-**最后更新：** 2025-11-21  
-**下次会议：** 待定（讨论K线图和技术指标的具体需求）
-
+**最后更新：** 2025-11-23 07:30

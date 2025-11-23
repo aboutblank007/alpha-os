@@ -5,7 +5,7 @@ import React from 'react';
 
 type Period = '1W' | '1M' | '3M' | 'YTD' | 'ALL';
 
-interface TagItem { date: string; label: string }
+interface TagItem { id: string; date: string; label: string }
 
 interface EquityCurveProps {
     data: Array<{ date: string; equity: number }>;
@@ -107,7 +107,7 @@ export function EquityCurve({ data, period = '1M', overlays = { ema: true, bb: f
                         {overlays.bb && <Line type="monotone" dataKey="bbL" stroke="#a855f7" strokeWidth={1} dot={false} />}
                         {tags.map(tag => {
                             const y = chartData.find(d => d.date === tag.date)?.equity;
-                            return y ? <ReferenceDot key={`${tag.date}-${tag.label}`} x={tag.date} y={y} r={4} fill="#ef4444" stroke="#fff" /> : null;
+                            return y ? <ReferenceDot key={tag.id} x={tag.date} y={y} r={4} fill="#ef4444" stroke="#fff" /> : null;
                         })}
                     </AreaChart>
                 </ResponsiveContainer>
