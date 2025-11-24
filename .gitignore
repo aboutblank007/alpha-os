@@ -1,42 +1,102 @@
-# See https://help.github.com/articles/ignoring-files/ for more about ignoring files.
+# AlphaOS .gitignore
 
-# dependencies
-/node_modules
-/.pnp
-.pnp.*
-.yarn/*
-!.yarn/patches
-!.yarn/plugins
-!.yarn/releases
-!.yarn/versions
+# 依赖
+node_modules/
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
 
-# testing
-/coverage
+# 环境变量（敏感信息）
+.env
+.env.local
+.env.*.local
+.env.production
+.env.development
 
-# next.js
-/.next/
-/out/
+# Next.js
+.next/
+out/
+dist/
+build/
 
-# production
-/build
-
-# misc
-.DS_Store
-*.pem
-
-# debug
+# 调试日志
 npm-debug.log*
 yarn-debug.log*
 yarn-error.log*
-.pnpm-debug.log*
+pnpm-debug.log*
 
-# env files (can opt-in for committing if needed)
-.env*
+# 测试覆盖率
+coverage/
+*.lcov
 
-# vercel
+# IDE 和编辑器
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+
+# 临时文件
+*.log
+*.tmp
+*.bak
+*.backup
+*.orig
+
+# Python 虚拟环境
+venv/
+env/
+ENV/
+
+# Docker 卷数据
+*.sock
+
+# 数据库备份
+*.sql.backup
+*.db.backup
+
+# CSV 数据文件（示例数据除外）
+*.csv
+!example.csv
+
+# 编译产物
+*.pyc
+*.pyo
+*.exe
+*.dll
+*.so
+*.dylib
+
+# 操作系统
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Vercel
 .vercel
 
-# typescript
+# TypeScript
 *.tsbuildinfo
 next-env.d.ts
-.env.local
+
+# 压缩文件
+*.zip
+*.tar.gz
+*.rar
+
+# 旧文件和备份
+*_restore.*
+*_old.*
+*_backup.*
+CHECK_*.sql
+SET_*.sql
+cleanup_*.sql
+query_*.sql
+
+# 调试脚本
+inspect_*.js
+inspect_*.mjs
+test_*.py
+test_*.js

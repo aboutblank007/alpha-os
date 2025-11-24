@@ -1,10 +1,25 @@
 import { NextResponse } from 'next/server';
-import { getCurrentPrices, convertToOandaInstrument, convertFromOandaInstrument } from '@/lib/oanda';
 import { mt5Client } from '@/lib/mt5-client';
 import { env } from '@/env';
 
 /**
- * 映射 OANDA 周期到 MT5 周期
+ * 符号格式转换工具函数
+ */
+function normalizeSymbol(symbol: string): string {
+    // EUR_USD -> EURUSD, USD_JPY -> USDJPY
+    return symbol.replace('_', '');
+}
+
+function addUnderscoreToSymbol(symbol: string): string {
+    // EURUSD -> EUR_USD (simplified)
+    if (symbol.length === 6) {
+        return `${symbol.slice(0, 3)}_${symbol.slice(3)}`;
+    }
+    return symbol;
+}
+
+/**
+ * 映射图表周期到 MT5 时间框架
  */
 function mapGranularityToMT5(g: string): string {
     if (g === 'S5' || g === 'S10' || g === 'S15' || g === 'S30') return 'M1'; // 秒级降级为 M1
@@ -62,7 +77,7 @@ export async function GET(request: Request) {
             
             let foundAny = false;
             symbols.forEach(s => {
-                const cleanSymbol = convertFromOandaInstrument(s); // USD_JPY -> USDJPY
+                const cleanSymbol = normalizeSymbol(s); // USD_JPY -> USDJPY
                 const data = mt5Prices[cleanSymbol] || mt5Prices[s];
                 
                 if (data) {
@@ -92,7 +107,7 @@ export async function GET(request: Request) {
     console.warn('使用模拟数据作为兜底');
     const mockPrices: Record<string, number> = {};
     symbols.forEach(symbol => {
-        const clean = convertFromOandaInstrument(symbol);
+        const clean = normalizeSymbol(symbol);
         if (clean.includes('JPY')) {
             mockPrices[clean] = 150 + Math.random() * 10;
         } else if (clean.includes('XAU')) {
@@ -178,7 +193,7 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: '缺少 instrument 参数' }, { status: 400 });
     }
 
-    const mt5Symbol = convertFromOandaInstrument(instrument); // USD_JPY -> USDJPY
+    const mt5Symbol = normalizeSymbol(instrument); // USD_JPY -> USDJPY
     const mt5Timeframe = mapGranularityToMT5(granularity);
 
     // 优先尝试 MT5 Bridge

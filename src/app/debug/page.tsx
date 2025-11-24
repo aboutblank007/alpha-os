@@ -10,7 +10,7 @@ interface EnvStatus {
     keyLength?: number;
   };
   server?: {
-    oanda: string;
+    bridge: string;
     supabase: string;
   };
 }
@@ -136,9 +136,9 @@ export default function DebugPage() {
             </h2>
             <div className="space-y-3">
               <div className="flex items-center justify-between p-3 bg-white/5 rounded-lg">
-                <div className="text-white font-mono text-sm">OANDA API</div>
+                <div className="text-white font-mono text-sm">MT5 Trading Bridge</div>
                 <div className="text-sm">
-                  {envStatus.server.oanda}
+                  {envStatus.server.bridge}
                 </div>
               </div>
               <div className="flex items-center justify-between p-3 bg-white/5 rounded-lg">
