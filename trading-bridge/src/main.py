@@ -25,6 +25,8 @@ class TradeRequest(BaseModel):
     sl: Optional[float] = 0.0
     tp: Optional[float] = 0.0
     ticket: Optional[int] = 0
+    type: Optional[str] = "TRADE" # TRADE or PENDING
+    price: Optional[float] = 0.0 # For Pending Orders
 
 class StatusUpdate(BaseModel):
     account: dict  # { balance, equity, margin, free_margin }
@@ -54,13 +56,14 @@ class HistoryData(BaseModel):
 @app.post("/trade/execute")
 async def execute_trade(trade: TradeRequest):
     command = {
-        "type": "TRADE",
+        "type": trade.type if trade.type else "TRADE",
         "action": trade.action,
         "symbol": trade.symbol,
         "volume": trade.volume,
         "sl": trade.sl,
         "tp": trade.tp,
-        "ticket": trade.ticket
+        "ticket": trade.ticket,
+        "price": trade.price
     }
     command_queue.append(command)
     return {"status": "queued", "queue_length": len(command_queue)}
@@ -116,7 +119,11 @@ async def update_status(status: StatusUpdate):
     # Debug: Print positions count if any
     if status.positions:
         print(f"Received {len(status.positions)} positions from EA")
-        # print(status.positions) # Optional: verbose logging
+        # Sample log to verify data structure
+        if len(status.positions) > 0:
+            print(f"First position sample: {status.positions[0]}")
+    else:
+        print("Received status update with NO positions")
     
     last_status = status.dict()
     

@@ -15,8 +15,10 @@ export function OngoingOrders() {
 
     // 同步 Bridge 仓位数据
     useEffect(() => {
-        if (bridgeStatus?.positions && Array.isArray(bridgeStatus.positions)) {
-            setPositions(bridgeStatus.positions);
+        const bridgePositions = bridgeStatus?.last_mt5_update?.positions;
+        
+        if (bridgePositions && Array.isArray(bridgePositions)) {
+            setPositions(bridgePositions);
             setLastUpdate(new Date());
         } else if (!isBridgeConnected) {
             setPositions([]);
@@ -39,7 +41,12 @@ export function OngoingOrders() {
                 })
             });
             
-            if (!res.ok) throw new Error('Failed to close position');
+            // We should assume success if we get a response, even if not 200, because EA might process it.
+            // But ideally we check response.
+            if (!res.ok) {
+                const data = await res.json();
+                throw new Error(data.error || 'Failed to close position');
+            }
             
             // 乐观更新：虽然下次轮询会更新，但我们可以先从列表移除
             // setPositions(prev => prev.filter(p => p.ticket !== ticket));

@@ -23,6 +23,11 @@ void OnDeinit(const int reason)
    EventKillTimer();
   }
 
+void OnTick()
+  {
+   // Standard EA requirement
+  }
+
 void OnTimer()
   {
    CheckForCommands();
@@ -33,12 +38,11 @@ void CheckForCommands()
   {
    char data[];
    char result[];
-   string headers;
-   string cookie = NULL;
-   string referer = NULL;
+   string result_headers;
    
-   // GET 请求的标准调用方式
-   int res = WebRequest("GET", ApiUrl + "/commands/pop", cookie, referer, 500, data, 0, result, headers);
+   // Standard GET request
+   // FIXED: Removed extra argument '0'
+   int res = WebRequest("GET", ApiUrl + "/commands/pop", "", 500, data, result, result_headers);
    
    if(res == 200)
      {
@@ -49,7 +53,32 @@ void CheckForCommands()
          
          string type = ExtractJsonString(json, "type");
          
-         if (type == "TRADE" || type == "") { // Default to TRADE if type missing (legacy)
+         if (type == "PENDING") {
+             string side = ExtractJsonString(json, "action"); // "BUY" or "SELL"
+             string symbol = ExtractJsonString(json, "symbol");
+             double volume = ExtractJsonDouble(json, "volume");
+             double price = ExtractJsonDouble(json, "price");
+             double sl = ExtractJsonDouble(json, "sl");
+             double tp = ExtractJsonDouble(json, "tp");
+             
+             if(volume <= 0) volume = 0.01;
+             if(symbol == "") symbol = Symbol();
+             
+             ENUM_ORDER_TYPE order_type;
+             double current_ask = SymbolInfoDouble(symbol, SYMBOL_ASK);
+             double current_bid = SymbolInfoDouble(symbol, SYMBOL_BID);
+             
+             if (side == "BUY") {
+                 if (price > current_ask) order_type = ORDER_TYPE_BUY_STOP;
+                 else order_type = ORDER_TYPE_BUY_LIMIT;
+             } else { // SELL
+                 if (price < current_bid) order_type = ORDER_TYPE_SELL_STOP;
+                 else order_type = ORDER_TYPE_SELL_LIMIT;
+             }
+             
+             ExecutePendingOrder(symbol, order_type, volume, price, sl, tp);
+         }
+         else if (type == "TRADE" || type == "") { // Default to TRADE if type missing (legacy)
              string action = ExtractJsonString(json, "action");
              string symbol = ExtractJsonString(json, "symbol");
              double volume = ExtractJsonDouble(json, "volume");
@@ -61,9 +90,53 @@ void CheckForCommands()
                  if(ticket > 0) ClosePosition(ticket);
                  else Print("CLOSE command missing ticket");
              }
+             else if(action == "PENDING") {
+                 double price = ExtractJsonDouble(json, "price");
+                 string type_str = ExtractJsonString(json, "type_str"); // e.g. "BUY_LIMIT"
+                 
+                 // Determine pending type based on price and current market price if not explicitly provided
+                 ENUM_ORDER_TYPE pending_type = ORDER_TYPE_BUY_LIMIT; // Default
+                 double current_ask = SymbolInfoDouble(symbol, SYMBOL_ASK);
+                 double current_bid = SymbolInfoDouble(symbol, SYMBOL_BID);
+                 
+                 // Logic to auto-determine pending type if generic BUY/SELL
+                 // If we receive "BUY" with a price:
+                 // - Price < Ask => Buy Limit
+                 // - Price > Ask => Buy Stop
+                 // If we receive "SELL" with a price:
+                 // - Price > Bid => Sell Limit
+                 // - Price < Bid => Sell Stop
+                 
+                 // Use the 'side' from JSON (which is passed as 'action' in some contexts, but here we need to be careful)
+                 // The current protocol sends action="BUY"/"SELL" even for pending if we reuse the logic,
+                 // but the new frontend sends action="BUY"/"SELL" AND type="PENDING"
+                 
+                 // Let's check the `action` variable which holds "BUY" or "SELL"
+                 string side = action; // This variable is from line 57, but we need to re-read it if we are in PENDING block?
+                 // Actually, line 57 reads 'action'. In the new frontend logic:
+                 // payload.action = side ("BUY" or "SELL")
+                 // payload.type = "PENDING" (this overrides the top level type check? No)
+                 
+                 // Wait, the frontend sends:
+                 // { action: "BUY", type: "PENDING", ... }
+                 // But the EA parses 'type' at line 54.
+                 // If type is "PENDING", we enter a new block?
+                 // No, the EA currently handles "TRADE" or "".
+                 
+                 // We need to modify the EA to handle the new "PENDING" type or modify the logic inside TRADE.
+                 // Let's modify the logic inside the existing block since `type` is usually "TRADE" or empty.
+                 // But the frontend sends type="PENDING".
+                 // So we need to add a check for type == "PENDING" at the top level OR handle it here.
+                 
+                 // Correct approach: Add a new top-level type check for "PENDING" or "ORDER"
+                 // OR, just handle generic "TRADE" and check if "price" is present?
+                 
+                 // Let's stick to the Plan: The frontend sends type="PENDING".
+                 // So we need to add `else if (type == "PENDING")` block.
+             }
              else {
                  if(volume <= 0) volume = 0.01;
-                 if(symbol == "" || symbol == NULL) symbol = Symbol(); 
+                 if(symbol == "") symbol = Symbol(); 
                  
                  if(action == "BUY") ExecuteTrade(symbol, ORDER_TYPE_BUY, volume, sl, tp);
                  else if(action == "SELL") ExecuteTrade(symbol, ORDER_TYPE_SELL, volume, sl, tp);
@@ -87,7 +160,7 @@ void CheckForCommands()
   }
 
 //+------------------------------------------------------------------+
-//| 辅助函数: 提取 JSON 字符串值                                         |
+//| Helper: Extract JSON String                                      |
 //+------------------------------------------------------------------+
 string ExtractJsonString(string json, string key)
   {
@@ -101,7 +174,7 @@ string ExtractJsonString(string json, string key)
   }
 
 //+------------------------------------------------------------------+
-//| 辅助函数: 提取 JSON 数值                                           |
+//| Helper: Extract JSON Number                                      |
 //+------------------------------------------------------------------+
 double ExtractJsonDouble(string json, string key)
   {
@@ -116,7 +189,7 @@ double ExtractJsonDouble(string json, string key)
   }
 
 //+------------------------------------------------------------------+
-//| 字符串转时间周期                                                   |
+//| String to Timeframe                                              |
 //+------------------------------------------------------------------+
 ENUM_TIMEFRAMES StringToTimeframe(string tf) {
    if(tf == "M1" || tf == "PERIOD_M1") return PERIOD_M1;
@@ -132,7 +205,7 @@ ENUM_TIMEFRAMES StringToTimeframe(string tf) {
 }
 
 //+------------------------------------------------------------------+
-//| 获取历史数据并发送                                                 |
+//| Get History Data and Send                                        |
 //+------------------------------------------------------------------+
 void SendHistoryData(string req_id, string symbol, ENUM_TIMEFRAMES tf, int count) {
     MqlRates rates[];
@@ -140,26 +213,27 @@ void SendHistoryData(string req_id, string symbol, ENUM_TIMEFRAMES tf, int count
     int copied = CopyRates(symbol, tf, 0, count, rates);
     
     if(copied > 0) {
-        // 构建 JSON
+        // Build JSON
         string json = StringFormat("{\"request_id\":\"%s\",\"symbol\":\"%s\",\"timeframe\":\"%s\",\"count\":%d,\"data\":[", 
                                    req_id, symbol, EnumToString(tf), copied);
         
         for(int i=0; i<copied; i++) {
             if(i > 0) json += ",";
-            // 使用简单格式以节省空间
+            // Use simple format to save space
             json += StringFormat("{\"time\":%d,\"open\":%.5f,\"high\":%.5f,\"low\":%.5f,\"close\":%.5f,\"tick_volume\":%d}",
                                  rates[i].time, rates[i].open, rates[i].high, rates[i].low, rates[i].close, rates[i].tick_volume);
         }
         json += "]}";
         
-        // 发送
+        // Send
         char data[];
         StringToCharArray(json, data, 0, StringLen(json), CP_UTF8);
         char res_data[];
         string headers = "Content-Type: application/json\r\n";
+        string result_headers;
         
-        // 增加超时时间到 2000ms，因为数据量较大
-        WebRequest("POST", ApiUrl + "/data/history", headers, 2000, data, res_data, headers);
+        // Increase timeout to 2000ms for larger data
+        WebRequest("POST", ApiUrl + "/data/history", headers, 2000, data, res_data, result_headers);
         Print("Sent history data: ", copied, " candles for ", symbol);
     } else {
         Print("Failed to copy rates for ", symbol);
@@ -167,7 +241,7 @@ void SendHistoryData(string req_id, string symbol, ENUM_TIMEFRAMES tf, int count
 }
 
 //+------------------------------------------------------------------+
-//| 获取正确的填充模式 (解决 4756 错误)                                   |
+//| Get Filling Mode (Fix 4756 Error)                                |
 //+------------------------------------------------------------------+
 uint GetFillingMode(string symbol)
   {
@@ -179,7 +253,7 @@ uint GetFillingMode(string symbol)
 
 void SendStatusUpdate()
   {
-   // 1. 账户信息
+   // 1. Account Info
    string account_json = StringFormat(
       "\"account\":{\"balance\":%.2f,\"equity\":%.2f,\"margin\":%.2f,\"free_margin\":%.2f}",
       AccountInfoDouble(ACCOUNT_BALANCE),
@@ -188,16 +262,17 @@ void SendStatusUpdate()
       AccountInfoDouble(ACCOUNT_MARGIN_FREE)
    );
 
-   // 2. 持仓列表
+   // 2. Positions
    string positions_json = "\"positions\":[";
    int total = PositionsTotal();
+   int added_count = 0;
    // Print("Total Positions: ", total); // Debug
    for(int i = 0; i < total; i++)
      {
       ulong ticket = PositionGetTicket(i);
       if(ticket > 0)
         {
-         if(i > 0) positions_json += ",";
+         if(added_count > 0) positions_json += ",";
          
          string symbol = PositionGetString(POSITION_SYMBOL);
          string comment = PositionGetString(POSITION_COMMENT);
@@ -220,43 +295,46 @@ void SendStatusUpdate()
             PositionGetDouble(POSITION_TP),
             comment
          );
+         added_count++;
+         Print("Found Position: Ticket=", ticket, " Symbol=", symbol);
         }
      }
    positions_json += "]";
 
-   // 3. 当前图表报价 (Legacy + Active Symbol)
+   // 3. Current Chart Quote (Legacy + Active Symbol)
    double bid = SymbolInfoDouble(Symbol(), SYMBOL_BID);
    double ask = SymbolInfoDouble(Symbol(), SYMBOL_ASK);
    
    string legacy_json = StringFormat("\"symbol\":\"%s\",\"bid\":%.5f,\"ask\":%.5f", 
                               Symbol(), bid, ask);
 
-   // 组合最终 JSON
+   // Combine Final JSON
    string json = "{" + account_json + "," + positions_json + "," + legacy_json + "}";
    
    char data[];
    StringToCharArray(json, data, 0, StringLen(json), CP_UTF8);
    char result[];
    string headers = "Content-Type: application/json\r\n";
+   string result_headers;
    
    // Debug: Print JSON if positions > 0
-   if (total > 0) Print("Sending Status JSON: ", json);
+   if (added_count > 0) Print("Sending Status JSON: ", json);
    
-   WebRequest("POST", ApiUrl + "/status/update", headers, 500, data, result, headers);
+   WebRequest("POST", ApiUrl + "/status/update", headers, 500, data, result, result_headers);
   }
 
 //+------------------------------------------------------------------+
-//| 监听交易事务 (成交回报)                                            |
+//| Trade Transaction Listener                                       |
 //+------------------------------------------------------------------+
 void OnTradeTransaction(const MqlTradeTransaction& trans,
-                        const MqlTradeRequest& request,
-                        const MqlTradeResult& result)
+                        const MqlTradeRequest& _request,
+                        const MqlTradeResult& _result)
   {
-   // 只关心“交易历史添加”事件 (成交)
+   // Only care about "Deal Add" (Execution)
    if(trans.type == TRADE_TRANSACTION_DEAL_ADD)
      {
       long ticket = trans.deal;
-      // 选中该笔成交以获取详细信息
+      // Select deal to get details
       if(HistoryDealSelect(ticket))
         {
          string symbol = HistoryDealGetString(ticket, DEAL_SYMBOL);
@@ -265,24 +343,25 @@ void OnTradeTransaction(const MqlTradeTransaction& trans,
          double price = HistoryDealGetDouble(ticket, DEAL_PRICE);
          long time = HistoryDealGetInteger(ticket, DEAL_TIME);
          
-         // 过滤掉非交易类型 (如 Balance)
+         // Filter out non-trade types (e.g. Balance)
          if(type > DEAL_TYPE_SELL) return;
 
          string side = (type == DEAL_TYPE_BUY) ? "BUY" : "SELL";
          
-         // 构造 JSON
+         // Build JSON
          string json = StringFormat("{\"ticket\":%d,\"symbol\":\"%s\",\"type\":\"%s\",\"volume\":%.2f,\"price\":%.5f,\"time\":\"%d\"}",
                                     ticket, symbol, side, volume, price, time);
          
          Print("Reporting Trade: ", json);
          
-         // 发送数据
+         // Send Data
          char data[];
          StringToCharArray(json, data, 0, StringLen(json), CP_UTF8);
          char res_data[];
          string headers = "Content-Type: application/json\r\n";
+         string result_headers;
          
-         WebRequest("POST", ApiUrl + "/trade/report", headers, 1000, data, res_data, headers);
+         WebRequest("POST", ApiUrl + "/trade/report", headers, 1000, data, res_data, result_headers);
         }
      }
   }
@@ -299,10 +378,10 @@ void ExecuteTrade(string symbol, ENUM_ORDER_TYPE type, double volume, double sl,
    request.volume = volume;
    request.type   = type;
    request.price  = (type == ORDER_TYPE_BUY) ? SymbolInfoDouble(symbol, SYMBOL_ASK) : SymbolInfoDouble(symbol, SYMBOL_BID);
-   request.deviation = 10; // 允许 10 点滑点
+   request.deviation = 10; // Allow 10 points deviation
    request.sl = sl;
    request.tp = tp;
-   request.type_filling = (ENUM_ORDER_TYPE_FILLING)GetFillingMode(symbol); // 自动适配填充模式
+   request.type_filling = (ENUM_ORDER_TYPE_FILLING)GetFillingMode(symbol); // Auto-adapt filling mode
    
    if(OrderSend(request, result)) 
      {
@@ -350,5 +429,32 @@ void ClosePosition(long ticket)
        Print("Position Closed! Ticket: ", ticket);
    } else {
        Print("Close Failed: ", result.retcode);
+   }
+  }
+
+void ExecutePendingOrder(string symbol, ENUM_ORDER_TYPE type, double volume, double price, double sl, double tp)
+  {
+   MqlTradeRequest request;
+   MqlTradeResult  result;
+   ZeroMemory(request);
+   ZeroMemory(result);
+   
+   request.action = TRADE_ACTION_PENDING;
+   request.symbol = symbol;
+   request.volume = volume;
+   request.type   = type;
+   request.price  = price;
+   request.sl = sl;
+   request.tp = tp;
+   request.type_time = ORDER_TIME_GTC; // Good Till Cancelled
+   request.type_filling = (ENUM_ORDER_TYPE_FILLING)GetFillingMode(symbol);
+   
+   if(OrderSend(request, result)) 
+     {
+      Print("Pending Order Placed! Ticket: ", result.order);
+     }
+   else 
+     {
+      Print("Pending Order Failed: ", result.retcode, " Comment: ", result.comment);
    }
   }
