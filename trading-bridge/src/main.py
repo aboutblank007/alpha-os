@@ -48,6 +48,8 @@ class TradeReport(BaseModel):
     profit: Optional[float] = 0.0
     commission: Optional[float] = 0.0
     swap: Optional[float] = 0.0
+    mae: Optional[float] = 0.0
+    mfe: Optional[float] = 0.0
 
 class HistoryData(BaseModel):
     request_id: str
@@ -98,18 +100,20 @@ async def report_trade(report: TradeReport):
                     print(f"⚠️  Position {report.position_id} already exists in DB, skipping duplicate insert")
                 else:
                     # Insert new trade
-                    data = {
-                        "symbol": report.symbol,
-                        "side": db_side,
-                        "quantity": report.volume,
-                        "entry_price": report.price,
-                        "status": "open",
+            data = {
+                "symbol": report.symbol,
+                "side": db_side,
+                "quantity": report.volume,
+                "entry_price": report.price,
+                "status": "open",
                         "notes": f"MT5 Deal: {report.ticket} | Position ID: {report.position_id}",
                         "external_order_id": str(report.position_id),  # Store position_id here for easy matching
-                        "pnl_net": 0,
-                        "pnl_gross": 0,
+                "pnl_net": 0,
+                "pnl_gross": 0,
                         "commission": report.commission,
-                        "swap": report.swap
+                        "swap": report.swap,
+                        "mae": report.mae,
+                        "mfe": report.mfe
                     }
                     supabase.table("trades").insert(data).execute()
                     print(f"✅ Trade OPEN synced to Supabase (Position ID: {report.position_id}, Deal: {report.ticket})")
@@ -155,7 +159,9 @@ async def report_trade(report: TradeReport):
                         "pnl_gross": report.profit,
                         "commission": (target_trade.get('commission', 0) or 0) + report.commission,
                         "swap": (target_trade.get('swap', 0) or 0) + report.swap,
-                        "notes": target_trade['notes'] + f" | Closed: Deal {report.ticket}, PnL: {report.profit:.2f}"
+                        "notes": target_trade['notes'] + f" | Closed: Deal {report.ticket}, PnL: {report.profit:.2f}",
+                        "mae": report.mae if report.mae != 0 else target_trade.get('mae', 0),
+                        "mfe": report.mfe if report.mfe != 0 else target_trade.get('mfe', 0)
                     }
                     
                     supabase.table("trades").update(update_data).eq("id", target_trade['id']).execute()
@@ -224,7 +230,7 @@ async def health_check():
 # --- History Data Endpoints ---
 
 @app.get("/history")
-async def get_history(symbol: str, timeframe: str, count: int = 1000):
+async def get_history(symbol: str, timeframe: str, count: int = 1000, from_ts: int = 0, to_ts: int = 0):
     request_id = str(uuid.uuid4())
     
     command = {
@@ -232,7 +238,9 @@ async def get_history(symbol: str, timeframe: str, count: int = 1000):
         "request_id": request_id,
         "symbol": symbol,
         "timeframe": timeframe,
-        "count": count
+        "count": count,
+        "from": from_ts,
+        "to": to_ts
     }
     
     # Create a future to wait for the response

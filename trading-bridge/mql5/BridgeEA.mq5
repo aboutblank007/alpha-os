@@ -150,13 +150,15 @@ void CheckForCommands()
              string symbol = ExtractJsonString(json, "symbol");
              string tf_str = ExtractJsonString(json, "timeframe");
              int count = (int)ExtractJsonDouble(json, "count");
+             long from_t = (long)ExtractJsonDouble(json, "from");
+             long to_t = (long)ExtractJsonDouble(json, "to");
              
              if(count > 1000) count = 1000; // Limit to 1000 per request
              if(count <= 0) count = 100;
              
              ENUM_TIMEFRAMES tf = StringToTimeframe(tf_str);
              
-             SendHistoryData(req_id, symbol, tf, count);
+             SendHistoryData(req_id, symbol, tf, count, from_t, to_t);
          }
         }
      }
@@ -215,10 +217,16 @@ ENUM_TIMEFRAMES StringToTimeframe(string tf) {
 //+------------------------------------------------------------------+
 //| Get History Data and Send                                        |
 //+------------------------------------------------------------------+
-void SendHistoryData(string req_id, string symbol, ENUM_TIMEFRAMES tf, int count) {
+void SendHistoryData(string req_id, string symbol, ENUM_TIMEFRAMES tf, int count, long from_t, long to_t) {
     MqlRates rates[];
     ArraySetAsSeries(rates, true);
-    int copied = CopyRates(symbol, tf, 0, count, rates);
+    int copied = 0;
+    
+    if(from_t > 0 && to_t > 0) {
+        copied = CopyRates(symbol, tf, (datetime)from_t, (datetime)to_t, rates);
+    } else {
+        copied = CopyRates(symbol, tf, 0, count, rates);
+    }
     
     if(copied > 0) {
         // Build JSON

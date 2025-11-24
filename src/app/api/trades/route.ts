@@ -15,6 +15,35 @@ export async function OPTIONS() {
   return NextResponse.json({}, { headers: corsHeaders });
 }
 
+export async function GET(request: Request) {
+  try {
+    const { searchParams } = new URL(request.url);
+    const status = searchParams.get('status');
+    const limit = parseInt(searchParams.get('limit') || '1000');
+
+    let query = supabase
+      .from('trades')
+      .select('*')
+      .order('entry_time', { ascending: true });
+
+    if (status) {
+      query = query.eq('status', status);
+    }
+    
+    const { data, error } = await query.limit(limit);
+
+    if (error) {
+      console.error('Supabase error:', error);
+      return NextResponse.json({ error: error.message }, { status: 500, headers: corsHeaders });
+    }
+
+    return NextResponse.json({ data }, { status: 200, headers: corsHeaders });
+  } catch (error) {
+    console.error('API error:', error);
+    return NextResponse.json({ error: 'Internal Server Error' }, { status: 500, headers: corsHeaders });
+  }
+}
+
 export async function POST(request: Request) {
   try {
     if (request.method === 'OPTIONS') {
@@ -90,6 +119,8 @@ export async function POST(request: Request) {
                         exit_price: exitPrice,
                         pnl_net: pnl,
                         pnl_gross: pnl,
+                        mae: body.mae, // Update MAE
+                        mfe: body.mfe, // Update MFE
                     })
                     .eq('id', openTrade.id);
                 
@@ -131,7 +162,9 @@ export async function POST(request: Request) {
                                 status: 'closed',
                                 notes: `Partial close of ${openTrade.id}`,
                                 strategies: openTrade.strategies,
-                                account_id: openTrade.account_id
+                                account_id: openTrade.account_id,
+                                mae: body.mae, // Insert MAE for closed part
+                                mfe: body.mfe  // Insert MFE for closed part
                             }
                         ]);
                     
@@ -161,6 +194,8 @@ export async function POST(request: Request) {
               status: body.status || 'open',
               notes: body.notes,
               strategies: body.strategies,
+              mae: body.mae, // Insert MAE
+              mfe: body.mfe  // Insert MFE
             },
           ])
           .select();

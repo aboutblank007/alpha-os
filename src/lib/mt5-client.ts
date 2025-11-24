@@ -29,13 +29,22 @@ export class MT5Client {
      * @param symbol 交易品种 (e.g. "EURUSD")
      * @param timeframe 时间周期 (e.g. "M1", "H1")
      * @param count 数量 (max 1000)
+     * @param from 开始时间 (可选)
+     * @param to 结束时间 (可选)
      */
-    async getHistory(symbol: string, timeframe: string, count: number = 100): Promise<MT5Candle[]> {
+    async getHistory(symbol: string, timeframe: string, count: number = 100, from?: Date, to?: Date): Promise<MT5Candle[]> {
         try {
             const url = new URL(`${this.baseUrl}/history`);
             url.searchParams.append('symbol', symbol);
             url.searchParams.append('timeframe', timeframe);
-            url.searchParams.append('count', count.toString());
+            
+            if (from && to) {
+                // Convert to unix timestamp (seconds)
+                url.searchParams.append('from_ts', Math.floor(from.getTime() / 1000).toString());
+                url.searchParams.append('to_ts', Math.floor(to.getTime() / 1000).toString());
+            } else {
+                url.searchParams.append('count', count.toString());
+            }
 
             const response = await fetch(url.toString(), {
                 method: 'GET',
@@ -76,4 +85,3 @@ export class MT5Client {
 }
 
 export const mt5Client = new MT5Client(env.TRADING_BRIDGE_API_URL || 'http://localhost:8000');
-
