@@ -58,7 +58,7 @@ export default function DashboardPage() {
     const [activeId, setActiveId] = useState<string | null>(null);
     const [selectedSymbol, setSelectedSymbol] = useState<string>('EUR_USD'); // State for selected chart symbol
 
-    const { isConnected } = useBridgeStatus();
+    const { isConnected, status } = useBridgeStatus();
 
     const handleTrade = async (symbol: string, side: 'BUY' | 'SELL') => {
         try {
@@ -108,6 +108,7 @@ export default function DashboardPage() {
         const channel = supabase
             .channel('realtime trades')
             .on('postgres_changes', { event: '*', schema: 'public', table: 'trades' }, (_payload) => {
+                console.log('Supabase Realtime Update:', _payload);
                 fetchTrades();
             })
             .subscribe();
@@ -501,11 +502,11 @@ export default function DashboardPage() {
                     {/* Stats - Fixed */}
                     <div className="col-span-1 animate-fade-in-up" style={{ animationDelay: '0.1s' }}>
                         <StatCard
-                            label="净盈亏"
-                            value={`$${stats.totalPnL.toFixed(2)}`}
+                            label="净资产"
+                            value={`$${(status?.account?.equity ?? 0).toFixed(2)}`}
                             trend={stats.totalPnL > 0 ? 8.0 : -5.0}
                             icon={<DollarSign size={24} />}
-                            subValue="今日 +$1,240"
+                            subValue={`余额: $${(status?.account?.balance ?? 0).toFixed(2)}`}
                         />
                     </div>
                     <div className="col-span-1 animate-fade-in-up" style={{ animationDelay: '0.15s' }}>

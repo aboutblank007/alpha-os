@@ -5,7 +5,7 @@ const BRIDGE_API_URL = process.env.TRADING_BRIDGE_API_URL || 'http://api.lootool
 export async function POST(req: Request) {
   try {
     const body = await req.json();
-    const { action, symbol, volume } = body;
+    const { action, symbol, volume, ticket, sl, tp, price, type } = body;
 
     if (!action || !symbol || !volume) {
       return NextResponse.json(
@@ -15,12 +15,22 @@ export async function POST(req: Request) {
     }
 
     // 转发请求到 Bridge API
+    // Forward all fields including ticket, sl, tp, price
     const res = await fetch(`${BRIDGE_API_URL}/trade/execute`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
       },
-      body: JSON.stringify({ action, symbol, volume }),
+      body: JSON.stringify({ 
+          action, 
+          symbol, 
+          volume,
+          ticket,
+          sl,
+          tp,
+          price,
+          type
+      }),
     });
 
     if (!res.ok) {

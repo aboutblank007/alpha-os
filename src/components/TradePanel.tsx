@@ -103,6 +103,7 @@ export function TradePanel({ open, onClose, symbol, initialSide = 'BUY' }: Trade
             onOpenChange={(o) => !o && onClose()} 
             title=""
             className="w-full max-w-[420px] p-0 overflow-hidden bg-white text-slate-900 mx-auto self-center my-4 shadow-2xl"
+            hideCloseButton
         >
             <div className="w-full bg-white rounded-lg overflow-hidden">
                 {/* Header */}
@@ -240,13 +241,13 @@ export function TradePanel({ open, onClose, symbol, initialSide = 'BUY' }: Trade
 
                             {/* Take Profit */}
                             <div className="space-y-1.5 mb-3">
-                                <div className="flex items-center gap-2">
+                                <div className="flex items-center gap-2" onClick={() => setTakeProfitEnabled(!takeProfitEnabled)}>
                                     <Checkbox
                                         checked={takeProfitEnabled}
                                         onChange={(e) => setTakeProfitEnabled(e.target.checked)}
-                                        className="h-4 w-4"
+                                        className="pointer-events-none"
                                     />
-                                    <span className="text-xs text-slate-600">止盈 (TP)</span>
+                                    <span className="text-xs text-slate-600 cursor-pointer select-none">止盈 (TP)</span>
                                 </div>
                                 <div className="grid grid-cols-2 gap-2">
                                     <Input
@@ -271,13 +272,13 @@ export function TradePanel({ open, onClose, symbol, initialSide = 'BUY' }: Trade
 
                             {/* Stop Loss */}
                             <div className="space-y-1.5">
-                                <div className="flex items-center gap-2">
+                                <div className="flex items-center gap-2" onClick={() => setStopLossEnabled(!stopLossEnabled)}>
                                     <Checkbox
                                         checked={stopLossEnabled}
                                         onChange={(e) => setStopLossEnabled(e.target.checked)}
-                                        className="h-4 w-4"
+                                        className="pointer-events-none"
                                     />
-                                    <span className="text-xs text-slate-600">止损 (SL)</span>
+                                    <span className="text-xs text-slate-600 cursor-pointer select-none">止损 (SL)</span>
                                 </div>
                                 <div className="grid grid-cols-2 gap-2">
                                     <Input

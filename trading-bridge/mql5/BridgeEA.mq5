@@ -87,8 +87,11 @@ void CheckForCommands()
              long ticket = (long)ExtractJsonDouble(json, "ticket");
              
              if(action == "CLOSE") {
-                 if(ticket > 0) ClosePosition(ticket);
-                 else Print("CLOSE command missing ticket");
+                 if(ticket > 0) {
+                     Print("Executing CLOSE command for ticket: ", ticket);
+                     ClosePosition(ticket);
+                 }
+                 else Print("CLOSE command missing ticket or invalid ticket: ", ticket);
              }
              else if(action == "PENDING") {
                  double price = ExtractJsonDouble(json, "price");
@@ -185,7 +188,12 @@ double ExtractJsonDouble(string json, string key)
    int end = StringFind(json, ",", start);
    if(end < 0) end = StringFind(json, "}", start);
    if(end < 0) return 0.0;
-   return StringToDouble(StringSubstr(json, start, end - start));
+   
+   string valStr = StringSubstr(json, start, end - start);
+   // Trim spaces if any (simple trim)
+   // StringTrimLeft(valStr); StringTrimRight(valStr); 
+   
+   return StringToDouble(valStr);
   }
 
 //+------------------------------------------------------------------+
@@ -333,7 +341,7 @@ void OnTradeTransaction(const MqlTradeTransaction& trans,
    // Only care about "Deal Add" (Execution)
    if(trans.type == TRADE_TRANSACTION_DEAL_ADD)
      {
-      long ticket = trans.deal;
+      ulong ticket = trans.deal;
       // Select deal to get details
       if(HistoryDealSelect(ticket))
         {
@@ -342,15 +350,21 @@ void OnTradeTransaction(const MqlTradeTransaction& trans,
          double volume = HistoryDealGetDouble(ticket, DEAL_VOLUME);
          double price = HistoryDealGetDouble(ticket, DEAL_PRICE);
          long time = HistoryDealGetInteger(ticket, DEAL_TIME);
+         long entry = HistoryDealGetInteger(ticket, DEAL_ENTRY); // 0=IN, 1=OUT, 2=INOUT
+         long position_id = HistoryDealGetInteger(ticket, DEAL_POSITION_ID);
+         double profit = HistoryDealGetDouble(ticket, DEAL_PROFIT);
+         double commission = HistoryDealGetDouble(ticket, DEAL_COMMISSION);
+         double swap = HistoryDealGetDouble(ticket, DEAL_SWAP);
          
          // Filter out non-trade types (e.g. Balance)
          if(type > DEAL_TYPE_SELL) return;
 
          string side = (type == DEAL_TYPE_BUY) ? "BUY" : "SELL";
+         string entry_str = (entry == DEAL_ENTRY_IN) ? "IN" : (entry == DEAL_ENTRY_OUT) ? "OUT" : "INOUT";
          
-         // Build JSON
-         string json = StringFormat("{\"ticket\":%d,\"symbol\":\"%s\",\"type\":\"%s\",\"volume\":%.2f,\"price\":%.5f,\"time\":\"%d\"}",
-                                    ticket, symbol, side, volume, price, time);
+         // Build JSON - Use %I64u for ulong ticket
+         string json = StringFormat("{\"ticket\":%I64u,\"symbol\":\"%s\",\"type\":\"%s\",\"volume\":%.2f,\"price\":%.5f,\"time\":\"%I64d\",\"entry\":\"%s\",\"position_id\":%I64d,\"profit\":%.2f,\"commission\":%.2f,\"swap\":%.2f}",
+                                    ticket, symbol, side, volume, price, time, entry_str, position_id, profit, commission, swap);
          
          Print("Reporting Trade: ", json);
          

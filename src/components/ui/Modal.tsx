@@ -9,9 +9,10 @@ interface ModalProps {
   children: React.ReactNode;
   footer?: React.ReactNode;
   className?: string;
+  hideCloseButton?: boolean;
 }
 
-export function Modal({ open, onOpenChange, title, children, footer, className }: ModalProps) {
+export function Modal({ open, onOpenChange, title, children, footer, className, hideCloseButton }: ModalProps) {
   const overlayRef = React.useRef<HTMLDivElement | null>(null);
   const dialogRef = React.useRef<HTMLDivElement | null>(null);
 
@@ -56,13 +57,15 @@ export function Modal({ open, onOpenChange, title, children, footer, className }
         {footer && (
           <div className="mt-6 flex justify-end gap-2">{footer}</div>
         )}
-        <button
-          className="absolute right-4 top-4 h-8 w-8 rounded-lg text-slate-400 hover:text-white hover:bg-white/5"
-          onClick={() => onOpenChange(false)}
-          aria-label="Close"
-        >
-          ×
-        </button>
+        {!hideCloseButton && (
+          <button
+            className="absolute right-4 top-4 h-8 w-8 rounded-lg text-slate-400 hover:text-white hover:bg-white/5"
+            onClick={() => onOpenChange(false)}
+            aria-label="Close"
+          >
+            ×
+          </button>
+        )}
       </div>
     </div>
   );

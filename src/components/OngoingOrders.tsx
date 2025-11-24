@@ -26,18 +26,20 @@ export function OngoingOrders() {
     }, [bridgeStatus, isBridgeConnected]);
 
     // 平仓函数
-    const handleClose = async (ticket: number) => {
+    const handleClose = async (pos: any) => {
         if (executingTicket) return;
-        if (!confirm('确认平仓此订单?')) return;
+        if (!confirm(`确认平仓 #${pos.ticket} (${pos.symbol})?`)) return;
         
-        setExecutingTicket(ticket);
+        setExecutingTicket(pos.ticket);
         try {
             const res = await fetch('/api/bridge/execute', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({
                     action: 'CLOSE',
-                    ticket: ticket
+                    ticket: pos.ticket,
+                    symbol: pos.symbol,
+                    volume: pos.volume
                 })
             });
             
@@ -142,7 +144,7 @@ export function OngoingOrders() {
                                     </td>
                                     <td className="px-4 py-3 text-right">
                                         <button 
-                                            onClick={() => handleClose(pos.ticket)}
+                                            onClick={() => handleClose(pos)}
                                             disabled={executingTicket === pos.ticket}
                                             className="p-1 hover:bg-white/10 rounded text-slate-400 hover:text-accent-danger transition-colors disabled:opacity-50"
                                             title="平仓"

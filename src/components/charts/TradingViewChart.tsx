@@ -8,8 +8,6 @@ import { Button } from '@/components/ui/Button';
 import { Checkbox } from '@/components/ui/Checkbox';
 import { Loader2, Settings2, Wifi, WifiOff, TrendingUp, TrendingDown } from 'lucide-react';
 
-import { supabase } from '@/lib/supabase';
-
 interface TradingViewChartProps {
   initialSymbol?: string;
   height?: number;
@@ -27,12 +25,13 @@ interface BridgeStatus {
   error?: string;
 }
 
-type Period = 'M1' | 'M5' | 'M15' | 'H1' | 'H4' | 'D';
+type Period = 'M1' | 'M5' | 'M15' | 'M30' | 'H1' | 'H4' | 'D';
 
 const PERIODS: { label: string; value: Period }[] = [
   { label: '1分', value: 'M1' },
   { label: '5分', value: 'M5' },
   { label: '15分', value: 'M15' },
+  { label: '30分', value: 'M30' },
   { label: '1时', value: 'H1' },
   { label: '4时', value: 'H4' },
   { label: '日线', value: 'D' },
@@ -71,45 +70,8 @@ export function TradingViewChart({ initialSymbol = 'EUR_USD', height = 500, clas
   const { status: bridgeStatus, isConnected, activeSymbols } = useBridgeStatus();
   const [executing, setExecuting] = useState<string | null>(null);
 
-  // Sync to Supabase logic (Legacy Frontend Sync - to be replaced by Backend Sync)
-  const lastProcessedTicketRef = useRef<number | null>(null);
-
-  useEffect(() => {
-    if (!bridgeStatus?.last_trade) return;
-    const lastTrade = bridgeStatus.last_trade;
-
-    if (lastTrade.ticket && lastTrade.ticket !== lastProcessedTicketRef.current) {
-      console.log('New trade detected from bridge:', lastTrade);
-      lastProcessedTicketRef.current = lastTrade.ticket;
-
-      // Sync to Supabase
-      const syncTrade = async () => {
-        const dbSide = lastTrade.type.toLowerCase();
-        const tradeData = {
-          symbol: lastTrade.symbol,
-          side: dbSide,
-          quantity: lastTrade.volume,
-          entry_price: lastTrade.price,
-          status: 'open',
-          created_at: new Date().toISOString(),
-          pnl_net: 0,
-          pnl_gross: 0,
-          commission: 0,
-          swap: 0,
-          notes: `MT5 Ticket: ${lastTrade.ticket}`
-        };
-
-        const { error } = await supabase.from('trades').insert(tradeData);
-        if (error) {
-          console.error('Failed to sync trade to Supabase:', error);
-        } else {
-          console.log('Trade synced to Supabase successfully');
-        }
-      };
-
-      syncTrade();
-    }
-  }, [bridgeStatus]);
+  // Trade syncing is now handled by the backend (trading-bridge/src/main.py)
+  // The backend automatically syncs trades to Supabase when they are reported from MT5
 
   const handleTrade = async (action: 'BUY' | 'SELL') => {
     if (executing) return;
@@ -383,6 +345,8 @@ export function TradingViewChart({ initialSymbol = 'EUR_USD', height = 500, clas
               {([
                 { label: '1M', value: 'M1' as Period },
                 { label: '5M', value: 'M5' as Period },
+                { label: '15M', value: 'M15' as Period },
+                { label: '30M', value: 'M30' as Period },
                 { label: '1H', value: 'H1' as Period },
                 { label: '4H', value: 'H4' as Period },
                 { label: '1D', value: 'D' as Period }

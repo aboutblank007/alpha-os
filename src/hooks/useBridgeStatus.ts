@@ -8,6 +8,12 @@ export interface BridgeStatus {
     pending_commands: number;
     last_trade: any;
     positions?: any[];
+    account?: {
+        balance: number;
+        equity: number;
+        margin: number;
+        free_margin: number;
+    };
 }
 
 export function useBridgeStatus(pollInterval = 1000) {

@@ -14,13 +14,15 @@ import {
 } from 'lucide-react';
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
+import { useBridgeStatus } from '@/hooks/useBridgeStatus';
 
 export function AppShell({ children }: { children: React.ReactNode }) {
   const [isSidebarOpen, setIsSidebarOpen] = useState(true);
   const [scrolled, setScrolled] = useState(false);
-  const [netAsset, setNetAsset] = useState<number | null>(null);
-  const [totalPnl, setTotalPnl] = useState<number>(0);
   const pathname = usePathname();
+
+  // 使用 MT5 实时数据
+  const { status } = useBridgeStatus();
 
   // Handle scroll effect for header
   useEffect(() => {
@@ -28,28 +30,6 @@ export function AppShell({ children }: { children: React.ReactNode }) {
     window.addEventListener('scroll', handleScroll);
     return () => window.removeEventListener('scroll', handleScroll);
   }, []);
-
-  // 加载账户余额
-  useEffect(() => {
-    loadBalance();
-
-    // 每30秒刷新一次
-    const interval = setInterval(loadBalance, 30000);
-    return () => clearInterval(interval);
-  }, []);
-
-  const loadBalance = async () => {
-    try {
-      const response = await fetch('/api/account/balance');
-      if (response.ok) {
-        const data = await response.json();
-        setNetAsset(data.net_asset);
-        setTotalPnl(data.total_pnl);
-      }
-    } catch (error) {
-      console.error('加载账户余额失败:', error);
-    }
-  };
 
   // Handle screen resize
   const [isMobile, setIsMobile] = useState(false);
@@ -214,14 +194,19 @@ export function AppShell({ children }: { children: React.ReactNode }) {
           {/* Right Actions */}
           <div className="flex items-center gap-4 md:gap-6">
             <div className="hidden md:flex flex-col items-end">
-              <span className="text-[10px] uppercase tracking-wider text-slate-500 font-medium">净资产</span>
+              <span className="text-[10px] uppercase tracking-wider text-slate-500 font-medium">净资产 (MT5)</span>
               <div className="flex items-baseline gap-2">
                 <span className="text-sm font-bold text-white font-mono tracking-tight">
-                  ${netAsset !== null ? netAsset.toFixed(2) : '---'}
+                  ${status?.account?.equity ? status.account.equity.toFixed(2) : '---'}
                 </span>
-                {totalPnl !== 0 && (
-                  <span className={`text-[10px] font-medium ${totalPnl >= 0 ? 'text-accent-success' : 'text-accent-danger'}`}>
-                    {totalPnl >= 0 ? '+' : ''}{totalPnl.toFixed(2)}
+                {status?.account && status.account.equity > 0 && (
+                  <span className={`text-[10px] font-medium ${
+                    status.account.equity >= status.account.balance 
+                      ? 'text-accent-success' 
+                      : 'text-accent-danger'
+                  }`}>
+                    {status.account.equity >= status.account.balance ? '+' : ''}
+                    {(status.account.equity - status.account.balance).toFixed(2)}
                   </span>
                 )}
               </div>

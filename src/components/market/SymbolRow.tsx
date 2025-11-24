@@ -43,9 +43,9 @@ interface SymbolRowProps {
     const pipette = priceStr.slice(-1);
 
     return (
-        <div className="flex items-baseline justify-center leading-none pointer-events-none">
-            <span className="text-2xl font-bold tracking-tighter">{main}</span>
-            <span className="text-sm font-bold align-top -mt-1 ml-0.5">{pipette}</span>
+        <div className="flex items-baseline justify-center leading-none pointer-events-none w-full">
+            <span style={{ fontSize: '16cqw' }} className="font-bold tracking-tighter">{main}</span>
+            <span style={{ fontSize: '10cqw' }} className="font-bold align-top ml-[0.1em] -mt-[0.1em]">{pipette}</span>
         </div>
     );
 };
@@ -62,32 +62,28 @@ export const SymbolRow = memo(function SymbolRow({
     const [showTradePanel, setShowTradePanel] = useState(false);
     const [tradeSide, setTradeSide] = useState<'BUY' | 'SELL'>('BUY');
 
-    const spread = bid && ask ? ((ask - bid) * (symbol.includes('JPY') || symbol.includes('XAU') ? 100 : 10000)).toFixed(1) : '-';
+    const spread = bid && ask ? ((ask - bid) * (symbol.includes('JPY') ? 100 : (symbol.includes('BTC') || symbol.includes('ETH')) ? 1 : symbol.includes('XAU') ? 100 : 10000)).toFixed(1) : '-';
     const cleanSymbol = symbol.replace('_', '').replace('/', '');
     const desc = SYMBOL_DESCRIPTIONS[cleanSymbol] || cleanSymbol;
 
-    // Determine color class for buttons
-    // Note: In original MarketWatch, Sell was red (#ff5252), Buy was teal (#00bfa5).
-    // We'll stick to those or use theme colors. Theme: danger/success.
-    // Original: bg-[#ff5252] / bg-[#00bfa5]
-    
     return (
         <>
             <div
-                className="flex items-center justify-between p-3 border-b border-surface-border hover:bg-white/5 transition-colors cursor-pointer group gap-2 relative"
-                onClick={() => onSelect(symbol)} // Clicking anywhere selects the symbol (e.g. chart update)
+                className="flex items-center justify-between p-2 border-b border-surface-border hover:bg-white/5 transition-colors cursor-pointer group gap-2 relative w-full"
+                onClick={() => onSelect(symbol)}
+                style={{ containerType: 'inline-size' }}
             >
                 {/* Left: Info */}
-                <div className="flex flex-col gap-0.5 min-w-0 flex-1">
+                <div className="flex flex-col gap-[0.5cqw] min-w-0 flex-1">
                     <div className="flex items-center gap-2">
-                        <span className="text-sm xl:text-base font-bold text-white group-hover:text-accent-primary transition-colors truncate">{symbol}</span>
+                        <span style={{ fontSize: '4cqw' }} className="font-bold text-white group-hover:text-accent-primary transition-colors truncate leading-tight min-text-[14px] max-text-[20px]">{symbol}</span>
                     </div>
-                    <span className="text-[9px] xl:text-[10px] text-slate-500 truncate block">{desc}</span>
-                    <span className="text-[9px] xl:text-[10px] text-slate-600 font-mono truncate block">{new Date().toLocaleTimeString()}</span>
+                    <span style={{ fontSize: '2.5cqw' }} className="text-slate-500 truncate block leading-tight min-text-[10px] max-text-[14px]">{desc}</span>
+                    <span style={{ fontSize: '2.5cqw' }} className="text-slate-600 font-mono truncate block leading-tight min-text-[10px] max-text-[14px]">{new Date().toLocaleTimeString()}</span>
                 </div>
 
                 {/* Right: Prices */}
-                <div className="flex gap-1 xl:gap-1.5 items-center relative shrink-0">
+                <div className="flex gap-1 xl:gap-1.5 items-center relative shrink-0 w-[45%] max-w-[240px] min-w-[140px]">
                     {/* Spread Badge */}
                     <div className="absolute -top-2 left-1/2 -translate-x-1/2 bg-slate-700/80 backdrop-blur-sm text-[8px] px-1 rounded text-slate-300 z-10 border border-surface-border shadow-sm">
                         {spread}
@@ -96,11 +92,12 @@ export const SymbolRow = memo(function SymbolRow({
                     {/* Bid Box (Sell) */}
                     <button
                         className={cn(
-                            "flex flex-col items-center justify-center w-20 h-10 xl:w-24 xl:h-12 rounded transition-all relative overflow-hidden mt-1",
+                            "flex flex-col items-center justify-center flex-1 aspect-[2/1] rounded transition-all relative overflow-hidden mt-1",
                             executingSide === 'SELL' 
                                 ? 'bg-slate-700 cursor-wait' 
                                 : 'bg-[#ff5252] hover:brightness-110 active:scale-95'
                         )}
+                        style={{ containerType: 'size' }}
                         onClick={(e) => {
                             e.stopPropagation();
                             setTradeSide('SELL');
@@ -112,8 +109,8 @@ export const SymbolRow = memo(function SymbolRow({
                             <Loader2 className="animate-spin text-white" size={16} />
                         ) : (
                             <>
-                                <div className="text-white leading-none drop-shadow-md scale-90 origin-center">{renderPrice(bid, symbol)}</div>
-                                <div className="text-[8px] font-bold text-white/60 uppercase tracking-wider">Sell</div>
+                                <div className="text-white leading-none drop-shadow-md w-full">{renderPrice(bid, symbol)}</div>
+                                <div style={{ fontSize: '8cqw' }} className="font-bold text-white/60 uppercase tracking-wider mt-[2cqw]">Sell</div>
                             </>
                         )}
                     </button>
@@ -121,11 +118,12 @@ export const SymbolRow = memo(function SymbolRow({
                     {/* Ask Box (Buy) */}
                     <button
                         className={cn(
-                            "flex flex-col items-center justify-center w-20 h-10 xl:w-24 xl:h-12 rounded transition-all relative overflow-hidden mt-1",
+                            "flex flex-col items-center justify-center flex-1 aspect-[2/1] rounded transition-all relative overflow-hidden mt-1",
                             executingSide === 'BUY' 
                                 ? 'bg-slate-700 cursor-wait' 
                                 : 'bg-[#00bfa5] hover:brightness-110 active:scale-95'
                         )}
+                        style={{ containerType: 'size' }}
                         onClick={(e) => {
                             e.stopPropagation();
                             setTradeSide('BUY');
@@ -137,8 +135,8 @@ export const SymbolRow = memo(function SymbolRow({
                             <Loader2 className="animate-spin text-white" size={16} />
                         ) : (
                             <>
-                                <div className="text-white leading-none drop-shadow-md scale-90 origin-center">{renderPrice(ask, symbol)}</div>
-                                <div className="text-[8px] font-bold text-white/60 uppercase tracking-wider">Buy</div>
+                                <div className="text-white leading-none drop-shadow-md w-full">{renderPrice(ask, symbol)}</div>
+                                <div style={{ fontSize: '8cqw' }} className="font-bold text-white/60 uppercase tracking-wider mt-[2cqw]">Buy</div>
                             </>
                         )}
                     </button>
