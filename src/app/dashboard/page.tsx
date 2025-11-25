@@ -18,7 +18,9 @@ import { MarketWatch } from '@/components/MarketWatch';
 import { DndContext, closestCenter, KeyboardSensor, PointerSensor, useSensor, useSensors, DragOverlay, defaultDropAnimationSideEffects, DragStartEvent, DragEndEvent } from '@dnd-kit/core';
 import { arrayMove, SortableContext, sortableKeyboardCoordinates, rectSortingStrategy } from '@dnd-kit/sortable';
 import { SortableItem } from '@/components/dashboard/SortableItem';
-import { useBridgeStatus } from '@/hooks/useBridgeStatus';
+import { useTradeStore } from '@/store/useTradeStore';
+import { useMarketStore } from '@/store/useMarketStore';
+import { ErrorBoundary } from '@/components/ErrorBoundary'; // Import ErrorBoundary
 
 interface DashboardStats {
     totalPnL: number;
@@ -58,7 +60,8 @@ export default function DashboardPage() {
     const [activeId, setActiveId] = useState<string | null>(null);
     const [selectedSymbol, setSelectedSymbol] = useState<string>('EUR_USD'); // State for selected chart symbol
 
-    const { isConnected, status } = useBridgeStatus();
+    const account = useTradeStore(state => state.account);
+    const isConnected = useMarketStore(state => state.isConnected);
 
     const handleTrade = async (symbol: string, side: 'BUY' | 'SELL') => {
         try {
@@ -417,8 +420,10 @@ export default function DashboardPage() {
 
         return (
             <div className={`${isOverlay ? 'h-full w-full' : baseClass} ${isOverlay ? 'shadow-2xl scale-105 cursor-grabbing' : ''}`}>
-                {/* We wrap content in a div to ensure height is respected if needed, but components usually handle it */}
+                {/* Wrap content in ErrorBoundary */}
+                <ErrorBoundary>
                 {content}
+                </ErrorBoundary>
             </div>
         );
     };
@@ -505,10 +510,10 @@ export default function DashboardPage() {
                     <div className="col-span-1 animate-fade-in-up" style={{ animationDelay: '0.1s' }}>
                         <StatCard
                             label="净资产"
-                            value={`$${(status?.last_mt5_update?.account?.equity ?? 0).toFixed(2)}`}
+                            value={`$${(account?.equity ?? 0).toFixed(2)}`}
                             trend={stats.totalPnL > 0 ? 8.0 : -5.0}
                             icon={<DollarSign size={24} />}
-                            subValue={`余额: $${(status?.last_mt5_update?.account?.balance ?? 0).toFixed(2)}`}
+                            subValue={`余额: $${(account?.balance ?? 0).toFixed(2)}`}
                         />
                     </div>
                     <div className="col-span-1 animate-fade-in-up" style={{ animationDelay: '0.15s' }}>

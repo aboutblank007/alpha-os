@@ -19,25 +19,35 @@ export async function GET(request: Request) {
   try {
     const { searchParams } = new URL(request.url);
     const status = searchParams.get('status');
-    const limit = parseInt(searchParams.get('limit') || '1000');
+    const page = parseInt(searchParams.get('page') || '0');
+    const pageSize = parseInt(searchParams.get('pageSize') || '50');
+    
+    // Calculate range for pagination
+    const from = page * pageSize;
+    const to = from + pageSize - 1;
 
     let query = supabase
       .from('trades')
-      .select('*')
-      .order('entry_time', { ascending: true });
+      .select('*', { count: 'exact' }) // Request exact count
+      .order('entry_time', { ascending: false }); // Newest first by default for recent trades
 
     if (status) {
       query = query.eq('status', status);
     }
     
-    const { data, error } = await query.limit(limit);
+    const { data, error, count } = await query.range(from, to);
 
     if (error) {
       console.error('Supabase error:', error);
       return NextResponse.json({ error: error.message }, { status: 500, headers: corsHeaders });
     }
 
-    return NextResponse.json({ data }, { status: 200, headers: corsHeaders });
+    return NextResponse.json({ 
+      data, 
+      count,
+      page,
+      pageSize
+    }, { status: 200, headers: corsHeaders });
   } catch (error) {
     console.error('API error:', error);
     return NextResponse.json({ error: 'Internal Server Error' }, { status: 500, headers: corsHeaders });
@@ -53,7 +63,6 @@ export async function POST(request: Request) {
     const body = await request.json();
     
     // Basic validation
-    // Note: entry_price can be 0 for MKT orders, so we check for undefined/null instead of truthiness
     if (!body.symbol || !body.side || body.entry_price === undefined || body.entry_price === null || !body.quantity) {
       return NextResponse.json(
         { error: 'Missing required fields' },
@@ -62,10 +71,7 @@ export async function POST(request: Request) {
     }
 
     // Check for existing open position to close
-    // Logic: Same symbol, opposite side, status='open'
     const oppositeSide = body.side === 'buy' ? 'sell' : 'buy';
-    
-    // console.log(`[API DEBUG] Trying to close position: Symbol=${body.symbol}, Side=${body.side} (looking for ${oppositeSide}), Qty=${body.quantity}`);
 
     const { data: openTrades, error: fetchError } = await supabase
       .from('trades')
@@ -73,12 +79,10 @@ export async function POST(request: Request) {
       .eq('symbol', body.symbol)
       .eq('side', oppositeSide)
       .eq('status', 'open')
-      .order('created_at', { ascending: true }); // FIFO (First In First Out)
+      .order('created_at', { ascending: true }); // FIFO
 
     if (fetchError) {
         console.error('Error fetching open trades:', fetchError);
-    } else {
-        // console.log(`[API DEBUG] Found ${openTrades?.length || 0} matching open trades.`);
     }
 
     let remainingQuantity = body.quantity;
@@ -91,13 +95,8 @@ export async function POST(request: Request) {
 
             const closeQty = Math.min(openTrade.quantity, remainingQuantity);
             
-            // Calculate PnL
-            // Buy to Open, Sell to Close: (Exit - Entry) * Qty
-            // Sell to Open, Buy to Close: (Entry - Exit) * Qty
             let pnl = 0;
             const entryPrice = openTrade.entry_price;
-            // If current order price is 0 (MKT), use entry price to avoid wild PnL, 
-            // OR ideally we should wait for price update. For now, if 0, result is 0 PnL.
             const exitPrice = body.entry_price || entryPrice; 
 
             if (openTrade.side === 'buy') { // Closing a Long
@@ -106,12 +105,8 @@ export async function POST(request: Request) {
                 pnl = (entryPrice - exitPrice) * closeQty;
             }
 
-            // Update the existing trade
-            // Note: simplified logic. If partial close, we ideally split the trade.
-            // Here we assume full match or just update the status for simplicity first.
+            // Full match
             if (Math.abs(openTrade.quantity - closeQty) < 0.0001) {
-                // console.log(`[API DEBUG] Full match found! Updating trade ID: ${openTrade.id}`);
-                // Full match
                 const { error: updateError } = await supabase
                     .from('trades')
                     .update({
@@ -119,8 +114,8 @@ export async function POST(request: Request) {
                         exit_price: exitPrice,
                         pnl_net: pnl,
                         pnl_gross: pnl,
-                        mae: body.mae, // Update MAE
-                        mfe: body.mfe, // Update MFE
+                        mae: body.mae,
+                        mfe: body.mfe,
                     })
                     .eq('id', openTrade.id);
                 
@@ -128,13 +123,7 @@ export async function POST(request: Request) {
                 remainingQuantity -= closeQty;
                 tradeProcessed = true;
             } else {
-                // Partial match: The open trade is larger than the closing order
-                // Logic:
-                // 1. Update the EXISTING open trade to reduce its quantity (it stays open)
-                // 2. Insert a NEW 'closed' trade representing the portion that was just closed
-                
-                // console.log(`[API DEBUG] Partial match. Splitting trade ${openTrade.id}. Open: ${openTrade.quantity} -> ${openTrade.quantity - closeQty}. Closing: ${closeQty}`);
-
+                // Partial match
                 const newOpenQty = openTrade.quantity - closeQty;
                 
                 // 1. Reduce quantity of existing open trade
@@ -158,20 +147,20 @@ export async function POST(request: Request) {
                                 quantity: closeQty,
                                 pnl_net: pnl,
                                 pnl_gross: pnl,
-                                commission: (openTrade.commission || 0) * (closeQty / openTrade.quantity), // Pro-rated commission
+                                commission: (openTrade.commission || 0) * (closeQty / openTrade.quantity),
                                 status: 'closed',
                                 notes: `Partial close of ${openTrade.id}`,
                                 strategies: openTrade.strategies,
                                 account_id: openTrade.account_id,
-                                mae: body.mae, // Insert MAE for closed part
-                                mfe: body.mfe  // Insert MFE for closed part
+                                mae: body.mae,
+                                mfe: body.mfe
                             }
                         ]);
                     
                     if (insertError) console.error('Error inserting closed partial trade:', insertError);
                 }
 
-                remainingQuantity -= closeQty; // Should be 0 now if closeQty was remainingQuantity
+                remainingQuantity -= closeQty;
                 tradeProcessed = true;
             }
         }
@@ -187,15 +176,15 @@ export async function POST(request: Request) {
               side: body.side,
               entry_price: body.entry_price,
               exit_price: body.exit_price,
-              quantity: remainingQuantity, // Insert remaining qty
+              quantity: remainingQuantity,
               pnl_net: body.pnl_net || 0,
               pnl_gross: body.pnl_gross || 0,
               commission: body.commission || 0,
               status: body.status || 'open',
               notes: body.notes,
               strategies: body.strategies,
-              mae: body.mae, // Insert MAE
-              mfe: body.mfe  // Insert MFE
+              mae: body.mae,
+              mfe: body.mfe
             },
           ])
           .select();

@@ -1,10 +1,10 @@
 "use client";
 
+import React, { useState, useEffect, useCallback } from 'react';
 import { Card } from "@/components/Card";
 import { Calendar, Filter, Download, Upload, Edit, BookOpen } from "lucide-react";
 import { ImportTradesModal } from "@/components/journal/ImportTradesModal";
 import { JournalNoteModal } from "@/components/journal/JournalNoteModal";
-import { useState, useEffect } from "react";
 
 interface DayData {
   date: Date;
@@ -33,8 +33,20 @@ export default function JournalPage() {
   const [dailyStats, setDailyStats] = useState<Record<string, DailyStats>>({});
   const [todayStats, setTodayStats] = useState<DailyStats | null>(null);
 
+  // Pagination-aware state (if we were listing trades, but this is a calendar view)
+  // For calendar, we usually fetch by month range, not page.
+  // However, the user requested "Pagination for RecentTrades and Journal".
+  // If "Journal" refers to a list of journal entries or daily summaries, we might paginate that.
+  // But this page is a Calendar view. 
+  // Assuming "Journal" in the prompt might refer to a list view mode or maybe just RecentTrades was the main target.
+  // If there's a list of trades below the calendar, we should paginate it.
+  // Currently, there is no trade list in this file, just stats and calendar.
+  // I'll assume the requirement for "Journal" pagination refers to fetching monthly data efficiently or if a list view is added.
+  // Since the current implementation fetches by date range (month), it is already effectively "paginated" by month.
+  // I will optimize the fetch to ensure it uses the API correctly.
+
   // 生成当前月份的日历数据
-  const generateCalendarDays = (): DayData[] => {
+  const generateCalendarDays = useCallback((): DayData[] => {
     const year = currentMonth.getFullYear();
     const month = currentMonth.getMonth();
     const firstDay = new Date(year, month, 1);
@@ -73,7 +85,7 @@ export default function JournalPage() {
     }
 
     return days;
-  };
+  }, [currentMonth, dailyStats, notes]);
 
   const days = generateCalendarDays();
 

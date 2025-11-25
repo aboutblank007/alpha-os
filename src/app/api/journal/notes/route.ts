@@ -12,8 +12,14 @@ export async function GET(request: Request) {
     const date = searchParams.get('date');
     const startDate = searchParams.get('startDate');
     const endDate = searchParams.get('endDate');
+    const page = parseInt(searchParams.get('page') || '0');
+    const pageSize = parseInt(searchParams.get('pageSize') || '20');
 
-    let query = supabase.from('journal_notes').select('*');
+    // Calculate range for pagination
+    const from = page * pageSize;
+    const to = from + pageSize - 1;
+
+    let query = supabase.from('journal_notes').select('*', { count: 'exact' });
 
     if (date) {
       // 获取特定日期的笔记
@@ -36,15 +42,22 @@ export async function GET(request: Request) {
         .lte('date', endDate)
         .order('date', { ascending: false });
     } else {
-      // 获取最近的笔记
-      query = query.order('date', { ascending: false }).limit(30);
+      // 获取最近的笔记 (Paginated)
+      query = query
+        .order('date', { ascending: false })
+        .range(from, to);
     }
 
-    const { data, error } = await query;
+    const { data, error, count } = await query;
 
     if (error) throw error;
 
-    return NextResponse.json({ notes: data });
+    return NextResponse.json({ 
+        notes: data,
+        count,
+        page,
+        pageSize 
+    });
   } catch (error: unknown) {
     console.error('获取笔记错误:', error);
     const errorMessage = error instanceof Error ? error.message : String(error);
@@ -172,4 +185,3 @@ export async function DELETE(request: Request) {
     );
   }
 }
-

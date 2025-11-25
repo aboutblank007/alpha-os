@@ -6,6 +6,8 @@ import uuid
 import time
 import os
 from supabase import create_client, Client
+import json
+import glob
 
 app = FastAPI(title="MT5 Trading Bridge (HTTP)")
 
@@ -17,6 +19,10 @@ last_trade = None  # Stores the most recent trade execution
 
 # 历史数据请求存储 { request_id: asyncio.Future }
 history_requests: Dict[str, asyncio.Future] = {}
+
+# 信号文件目录 (根据 MT5 实际安装位置可能需要调整，或通过 ENV 传入)
+# Docker 环境中应挂载到 /app/signals
+SIGNAL_DIR = os.environ.get("SIGNAL_DIR", "/app/signals")
 
 class TradeRequest(BaseModel):
     action: str # BUY, SELL, CLOSE
@@ -58,7 +64,76 @@ class HistoryData(BaseModel):
     data: List[Dict[str, Any]] # List of candles
     count: int
 
-# ...
+# --- Signal Watcher ---
+async def watch_signal_directory():
+    """
+    Periodically scan the signal directory for new JSON files from MT5.
+    """
+    print(f"Starting signal watcher on {SIGNAL_DIR}...")
+    if not os.path.exists(SIGNAL_DIR):
+        try:
+            os.makedirs(SIGNAL_DIR, exist_ok=True)
+            print(f"Created signal directory: {SIGNAL_DIR}")
+        except Exception as e:
+            print(f"Failed to create signal directory: {e}")
+            return
+
+    supabase_url = os.environ.get("SUPABASE_URL")
+    supabase_key = os.environ.get("SUPABASE_KEY")
+    supabase = None
+    
+    if supabase_url and supabase_key:
+        try:
+            supabase = create_client(supabase_url, supabase_key)
+        except Exception as e:
+            print(f"Failed to init Supabase client in watcher: {e}")
+
+    while True:
+        try:
+            # Scan for .json files
+            files = glob.glob(os.path.join(SIGNAL_DIR, "*.json"))
+            for file_path in files:
+                try:
+                    with open(file_path, 'r') as f:
+                        content = json.load(f)
+                    
+                    print(f"🔔 New Signal Received: {content}")
+                    
+                    # Insert into Supabase
+                    if supabase:
+                        signal_data = {
+                            "symbol": content.get("symbol"),
+                            "action": content.get("action"), # BUY / SELL
+                            "price": content.get("price"),
+                            "sl": content.get("sl"),
+                            "tp": content.get("tp"),
+                            "status": "new",
+                            "source": "mt5_indicator",
+                            "raw_data": content
+                        }
+                        supabase.table("signals").insert(signal_data).execute()
+                        print("✅ Signal saved to DB")
+                    
+                    # Delete file after processing
+                    os.remove(file_path)
+                    
+                except Exception as e:
+                    print(f"Error processing signal file {file_path}: {e}")
+                    # Rename to .err to avoid infinite loop loop
+                    try:
+                        os.rename(file_path, file_path + ".err")
+                    except:
+                        pass
+                        
+        except Exception as e:
+            print(f"Watcher error: {e}")
+            
+        await asyncio.sleep(0.5) # Check every 500ms
+
+@app.on_event("startup")
+async def startup_event():
+    # Start watcher in background
+    asyncio.create_task(watch_signal_directory())
 
 @app.post("/trade/execute")
 async def execute_trade(trade: TradeRequest):
@@ -100,11 +175,11 @@ async def report_trade(report: TradeReport):
                     print(f"⚠️  Position {report.position_id} already exists in DB, skipping duplicate insert")
                 else:
                     # Insert new trade
-            data = {
-                "symbol": report.symbol,
-                "side": db_side,
-                "quantity": report.volume,
-                "entry_price": report.price,
+                    data = {
+                        "symbol": report.symbol,
+                        "side": db_side,
+                        "quantity": report.volume,
+                        "entry_price": report.price,
                 "status": "open",
                         "notes": f"MT5 Deal: {report.ticket} | Position ID: {report.position_id}",
                         "external_order_id": str(report.position_id),  # Store position_id here for easy matching
@@ -185,14 +260,9 @@ async def pop_command():
 async def update_status(status: StatusUpdate):
     global last_status
     
-    # Debug: Print positions count if any
-    if status.positions:
-        print(f"Received {len(status.positions)} positions from EA")
-        # Sample log to verify data structure
-        if len(status.positions) > 0:
-            print(f"First position sample: {status.positions[0]}")
-    else:
-        print("Received status update with NO positions")
+    # Only log if position count changes (optional) or just silence routine logs
+    # if status.positions:
+    #     print(f"Received {len(status.positions)} positions from EA")
     
     last_status = status.dict()
     

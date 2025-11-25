@@ -1,27 +1,59 @@
 import { env } from '@/env';
+import { z } from 'zod';
 
-export interface MT5Candle {
-    time: number;
-    open: number;
-    high: number;
-    low: number;
-    close: number;
-    tick_volume: number;
-}
+// Define Zod schemas for validation
+const MT5CandleSchema = z.object({
+    time: z.number(),
+    open: z.number(),
+    high: z.number(),
+    low: z.number(),
+    close: z.number(),
+    tick_volume: z.number(),
+});
 
-export interface MT5HistoryResponse {
-    request_id: string;
-    symbol: string;
-    timeframe: string;
-    count: number;
-    data: MT5Candle[];
-}
+const MT5HistoryResponseSchema = z.object({
+    request_id: z.string(),
+    symbol: z.string(),
+    timeframe: z.string(),
+    count: z.number(),
+    data: z.array(MT5CandleSchema),
+});
+
+export type MT5Candle = z.infer<typeof MT5CandleSchema>;
+export type MT5HistoryResponse = z.infer<typeof MT5HistoryResponseSchema>;
 
 export class MT5Client {
     private baseUrl: string;
+    private retryDelay: number = 1000;
+    private maxRetries: number = 3;
 
     constructor(baseUrl: string) {
         this.baseUrl = baseUrl;
+    }
+
+    /**
+     * Execute a fetch request with exponential backoff
+     */
+    private async fetchWithRetry(url: string, options: RequestInit, retries = 0): Promise<Response> {
+        try {
+            const response = await fetch(url, options);
+            if (!response.ok) {
+                // Only retry on 5xx errors or specific 4xx that might be transient
+                if (response.status >= 500 || response.status === 429) {
+                    throw new Error(`Server Error: ${response.status}`);
+                }
+                return response; // Return 4xx errors directly without retry (e.g., 404, 400)
+            }
+            return response;
+        } catch (error) {
+            if (retries < this.maxRetries) {
+                const delay = this.retryDelay * Math.pow(2, retries); // 1s, 2s, 4s
+                console.warn(`MT5 Client: Request failed, retrying in ${delay}ms... (${retries + 1}/${this.maxRetries})`);
+                await new Promise(resolve => setTimeout(resolve, delay));
+                return this.fetchWithRetry(url, options, retries + 1);
+            }
+            throw error;
+        }
     }
 
     /**
@@ -46,7 +78,7 @@ export class MT5Client {
                 url.searchParams.append('count', count.toString());
             }
 
-            const response = await fetch(url.toString(), {
+            const response = await this.fetchWithRetry(url.toString(), {
                 method: 'GET',
                 headers: {
                     'Content-Type': 'application/json',
@@ -59,7 +91,11 @@ export class MT5Client {
                 throw new Error(`MT5 Bridge Error: ${response.status} ${response.statusText}`);
             }
 
-            const result: MT5HistoryResponse = await response.json();
+            const rawData = await response.json();
+            
+            // Validate response data with Zod
+            const result = MT5HistoryResponseSchema.parse(rawData);
+            
             return result.data;
         } catch (error) {
             console.error('MT5 getHistory failed:', error);
@@ -72,7 +108,7 @@ export class MT5Client {
      */
     async getStatus() {
         try {
-            const response = await fetch(`${this.baseUrl}/status`, {
+            const response = await this.fetchWithRetry(`${this.baseUrl}/status`, {
                 next: { revalidate: 1 } // Next.js 缓存控制
             });
             if (!response.ok) throw new Error('Failed to get status');

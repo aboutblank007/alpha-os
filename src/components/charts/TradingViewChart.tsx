@@ -7,6 +7,7 @@ import { Select } from '@/components/ui/Select';
 import { Button } from '@/components/ui/Button';
 import { Checkbox } from '@/components/ui/Checkbox';
 import { Settings2 } from 'lucide-react';
+import { useMarketStore } from '@/store/useMarketStore';
 
 interface TradingViewChartProps {
   initialSymbol?: string;
@@ -15,12 +16,6 @@ interface TradingViewChartProps {
 }
 
 type Period = 'M1' | 'M5' | 'M15' | 'M30' | 'H1' | 'H4' | 'D';
-
-
-
-import { useBridgeStatus } from '@/hooks/useBridgeStatus';
-
-// ... imports
 
 export function TradingViewChart({ initialSymbol = 'EUR_USD', height = 500, className }: TradingViewChartProps) {
   const chartContainerRef = useRef<HTMLDivElement>(null);
@@ -39,9 +34,8 @@ export function TradingViewChart({ initialSymbol = 'EUR_USD', height = 500, clas
   const [trendState, setTrendState] = useState<TrendState | null>(null);
   const [showSettings, setShowSettings] = useState(false);
 
-  // Use Bridge Hook
-  // Use Bridge Hook
-  const { activeSymbols } = useBridgeStatus();
+  // Use Market Store
+  const activeSymbols = useMarketStore(state => state.activeSymbols);
 
   // Trade syncing is now handled by the backend (trading-bridge/src/main.py)
   // The backend automatically syncs trades to Supabase when they are reported from MT5
@@ -379,7 +373,3 @@ export function TradingViewChart({ initialSymbol = 'EUR_USD', height = 500, clas
     </div>
   );
 }
-
-// --- Helper Functions ---
-
-

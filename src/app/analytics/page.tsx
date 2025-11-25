@@ -23,7 +23,7 @@ interface Stats {
 }
 
 export default function AnalyticsPage() {
-    const [trades, setTrades] = useState<Trade[]>([]);
+    // const [trades, setTrades] = useState<Trade[]>([]); // Removed unused state
     const [loading, setLoading] = useState(true);
     const [stats, setStats] = useState<Stats>({
         profitFactor: 0,
@@ -50,11 +50,10 @@ export default function AnalyticsPage() {
         };
 
         fetchData();
-        // eslint-disable-next-line react-hooks/exhaustive-deps
     }, []);
 
     const processData = (rawTrades: Trade[]) => {
-        setTrades(rawTrades);
+        // setTrades(rawTrades); // Removed unused state update
 
         // 1. Calculate Basic Stats
         const wins = rawTrades.filter(t => t.pnl_net > 0);
@@ -93,7 +92,7 @@ export default function AnalyticsPage() {
 
         // 3. Process Drawdown Data
         let peak = 0;
-        const balance = 10000; // Initial Balance // Starting from 0 relative change, or could fetch initial balance
+        // const balance = 10000; // unused
         // If we want % drawdown, we usually need a base balance. 
         // Let's assume a starting balance of 10000 for calculation if not available, 
         // OR just calculate absolute drawdown from peak PnL accumulation.

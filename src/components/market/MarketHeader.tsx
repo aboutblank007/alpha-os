@@ -1,6 +1,6 @@
 import React from 'react';
 import { StatusBadge } from '@/components/ui/StatusBadge';
-import { useBridgeStatus } from '@/hooks/useBridgeStatus';
+import { useTradeStore } from '@/store/useTradeStore';
 
 interface MarketHeaderProps {
     isConnected: boolean;
@@ -8,8 +8,7 @@ interface MarketHeaderProps {
 }
 
 export function MarketHeader({ isConnected, symbolCount }: MarketHeaderProps) {
-    const { status } = useBridgeStatus(2000);
-    const account = status?.last_mt5_update?.account;
+    const account = useTradeStore(state => state.account);
 
     return (
         <div className="flex flex-col p-4 border-b border-surface-border bg-[#1e222d] gap-3">
@@ -51,4 +50,3 @@ export function MarketHeader({ isConnected, symbolCount }: MarketHeaderProps) {
         </div>
     );
 }
-

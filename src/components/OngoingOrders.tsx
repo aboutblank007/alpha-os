@@ -1,42 +1,17 @@
 import { ArrowUpRight, ArrowDownRight, Clock, WifiOff, Zap, XCircle } from 'lucide-react';
-import { useEffect, useState } from 'react';
-import { useBridgeStatus } from '@/hooks/useBridgeStatus';
+import { useState } from 'react';
+import { useMarketStore } from '@/store/useMarketStore';
+import { useTradeStore, MT5Position } from '@/store/useTradeStore';
 
 export function OngoingOrders() {
-    // 使用统一的 Bridge Status Hook
-    const { isConnected: isBridgeConnected, status: bridgeStatus } = useBridgeStatus(1000);
+    // Use Stores directly
+    const isBridgeConnected = useMarketStore(state => state.isConnected);
+    const positions = useTradeStore(state => state.positions);
 
-    interface Position {
-        ticket: number;
-        symbol: string;
-        type: 'BUY' | 'SELL';
-        volume: number;
-        open_price: number;
-        current_price: number;
-        sl: number;
-        tp: number;
-        pnl: number;
-        swap: number;
-    }
-
-    const [positions, setPositions] = useState<Position[]>([]);
     const [executingTicket, setExecutingTicket] = useState<number | null>(null);
 
-    // 同步 Bridge 仓位数据
-    useEffect(() => {
-        const bridgePositions = bridgeStatus?.last_mt5_update?.positions;
-
-        if (bridgePositions && Array.isArray(bridgePositions)) {
-            // Map MT5Position to component Position interface if needed, or just cast if compatible
-            // The component Position interface likely needs to match MT5Position
-            setPositions(bridgePositions as unknown as Position[]);
-        } else if (!isBridgeConnected) {
-            setPositions([]);
-        }
-    }, [bridgeStatus, isBridgeConnected]);
-
     // 平仓函数
-    const handleClose = async (pos: Position) => {
+    const handleClose = async (pos: MT5Position) => {
         if (executingTicket) return;
         if (!confirm(`确认平仓 #${pos.ticket} (${pos.symbol})?`)) return;
 
@@ -62,6 +37,8 @@ export function OngoingOrders() {
 
             // 乐观更新：虽然下次轮询会更新，但我们可以先从列表移除
             // setPositions(prev => prev.filter(p => p.ticket !== ticket));
+            // Note: With Zustand, we rely on the next poll update or we can invoke an action to optimistically remove.
+            // For now, we wait for the poll to update the store.
 
         } catch (e) {
             alert('平仓失败: ' + (e instanceof Error ? e.message : '未知错误'));

@@ -1,0 +1,158 @@
+# AlphaOS 项目实施与状态报告
+
+**日期**: 2024-11-25
+**版本**: Phase 1 & 2 Complete (Signal System Deployed)
+
+## 1. 项目概览
+
+本项目旨在将 AlphaOS 从一个基础的交易监控工具升级为**机构级智能交易系统**。根据战略路线图，我们成功完成了第一阶段（坚实基础）和第二阶段（交易核心增强）的开发任务。核心架构从依赖外部 Webhook 转向了更可靠的 MT5 原生指标与 Python Bridge 的闭环系统。
+
+## 2. 已完成实施内容
+
+### Phase 1: 坚实基础 (Foundation & Reliability)
+*核心目标: 消除"玩具感"，建立金融级的稳定性。*
+
+*   **状态管理重构 (Zustand Integration)**
+    *   引入 `zustand` 替代 React Context。
+    *   创建了三大核心 Store: `useMarketStore` (行情), `useTradeStore` (账户/持仓), `useUserStore` (配置)。
+    *   **成效**: 显著减少了组件间的 Props Drilling，提升了渲染性能。
+
+*   **系统稳定性增强**
+    *   **MT5 Client**: 实现了指数退避重试 (Exponential Backoff) 和 Zod 类型验证，确保 Bridge 通信的健壮性。
+    *   **Bridge Sync Hook**: 开发 `useBridgeSync`，统一管理心跳检测和状态同步。
+    *   **错误边界**: 引入 `ErrorBoundary` 组件，防止局部错误导致整个应用崩溃。
+
+*   **数据性能优化**
+    *   **服务端分页**: 为 `Journal` 和 `RecentTrades` 实现了 API 级的分页逻辑。
+    *   **虚拟滚动**: 前端引入 `react-virtuoso`，流畅处理大量交易记录的渲染。
+
+*   **数据一致性保障**
+    *   开发了 `/api/cron/consistency-check` 接口，定期比对 Supabase 数据库与 MT5 终端的持仓状态，自动识别"幽灵订单"或"遗漏订单"。
+
+### Phase 2: 交易核心增强 (Advanced Trading Core)
+*核心目标: 提供超越 MT5 原生的交易体验。*
+
+*   **MQL5 指标与信号系统 (重大架构调整)**
+    *   **PivotTrendSignals.mq5**: 成功将 Pine Script 逻辑移植为 MQL5 原生指标。
+    *   **信号传输链路**: 指标生成 JSON 文件 -> Python Bridge 监听文件变化 -> 写入 Supabase -> 前端实时推送。
+    *   **优势**: 彻底绕开了 TradingView Webhook 的订阅限制，实现了本地闭环，延迟更低，数据更安全。
+
+*   **智能交易面板 (TradePanel 2.0)**
+    *   **信号联动**: 点击实时通知 (`SignalListener`) 自动打开面板并预填 Symbol, Price, SL, TP。
+    *   **风控计算器**: 集成风险计算功能，支持按风险金额或账户百分比自动计算手数 (Lots)。
+    *   **高级订单**: 实现了 **OCO (One Cancels Other)** 订单逻辑和 **Auto SL/TP** (基于模拟 ATR) 功能。
+
+*   **工程化 (DevOps)**
+    *   配置了 GitHub Actions (`ci.yml`)，确保代码提交时的质量检查 (Linting & Type Checking)。
+
+## 3. 信号系统部署详情 (2024-11-25 更新)
+
+### 3.1 系统架构
+
+```
+MT5 指标 (PivotTrendSignals.mq5)
+    │
+    ▼ 生成 JSON 信号文件
+Docker 共享卷 (signal_data)
+    │
+    ▼ watch_signal_directory() 每 500ms 扫描
+Python Bridge API
+    │
+    ▼ 插入数据库
+Supabase (signals 表)
+    │
+    ▼ Realtime 推送
+前端 SignalListener
+    │
+    ▼ Toast 通知 + 打开 TradePanel
+```
+
+### 3.2 关键配置
+
+**Docker 卷映射** (`docker-compose.yml`):
+```yaml
+services:
+  mt5:
+    volumes:
+      - signal_data:/config/.wine/drive_c/Program Files/MetaTrader 5/MQL5/Files/AlphaOS/Signals
+  
+  bridge-api:
+    environment:
+      - SUPABASE_URL=${NEXT_PUBLIC_SUPABASE_URL}
+      - SUPABASE_KEY=${NEXT_PUBLIC_SUPABASE_ANON_KEY}
+      - SIGNAL_DIR=/app/signals
+    volumes:
+      - signal_data:/app/signals
+
+volumes:
+  signal_data:
+```
+
+**权限配置** (必须):
+```bash
+docker exec mt5-vnc chmod 777 "/config/.wine/drive_c/Program Files/MetaTrader 5/MQL5/Files/AlphaOS/Signals/"
+```
+
+### 3.3 验证日志
+
+**成功的信号处理日志**:
+```
+Starting signal watcher on /app/signals...
+🔔 New Signal Received: {'symbol': 'EURUSD', 'action': 'BUY', 'price': 1.15291, 'sl': 1.15271, 'tp': 1.15344, 'comment': '买入'}
+✅ Signal saved to DB
+```
+
+## 4. 遇到的问题与解决方案
+
+在实施过程中，我们遇到并解决了以下关键技术挑战：
+
+| 问题分类 | 问题描述 | 解决方案 |
+| :--- | :--- | :--- |
+| **架构限制** | 用户无 TradingView 会员，无法使用 Webhook 推送信号。 | **方案转型**: 开发 MQL5 原生指标，配合 Python 文件监听器，实现本地信号闭环。 |
+| **Docker 卷共享** | MT5 和 Bridge 容器无法共享信号文件。 | **共享卷配置**: 创建 `signal_data` 卷，分别挂载到两个容器的对应目录。 |
+| **文件权限** | MT5 进程 (abc 用户) 无法写入 root 拥有的目录。 | **权限修复**: `chmod 777` 信号目录，确保 MT5 可写入。 |
+| **环境变量** | Bridge 容器中 Supabase 环境变量为空。 | **变量映射修复**: docker-compose 中使用 `${NEXT_PUBLIC_SUPABASE_URL}` 而非 `${SUPABASE_URL}`。 |
+| **权限/沙箱** | `npm install` 和 Lint 工具在沙箱环境中报错 `EPERM`。 | **权限升级**: 申请并使用 `all` 权限运行关键的构建命令。 |
+| **运行时错误** | `SignalListener` 组件报错 "variable access before declaration"。 | **代码重构**: 调整函数声明顺序，优化 `useEffect` 依赖项。 |
+| **代码质量** | 大量的 "unused variable" 和 "any type" 警告。 | **全面清理**: 执行了严格的 Lint 检查，移除未使用的状态变量。 |
+| **数据完整性** | 交易平仓时可能出现的"部分平仓"逻辑复杂。 | **逻辑完善**: 在 `/api/trades` 中实现了拆单逻辑。 |
+
+## 5. 文件清单
+
+### 新增文件
+
+| 文件路径 | 说明 |
+|----------|------|
+| `src/store/useMarketStore.ts` | 行情数据 Zustand Store |
+| `src/store/useTradeStore.ts` | 交易数据 Zustand Store |
+| `src/store/useUserStore.ts` | 用户配置 Zustand Store |
+| `src/hooks/useBridgeSync.ts` | Bridge 同步 Hook |
+| `src/components/SignalListener.tsx` | 信号监听组件 |
+| `src/components/ErrorBoundary.tsx` | 错误边界组件 |
+| `src/db/signals_table.sql` | 信号表 SQL 定义 |
+| `src/app/api/cron/consistency-check/route.ts` | 数据一致性检查 API |
+| `trading-bridge/mql5/PivotTrendSignals.mq5` | MQL5 信号指标 |
+| `.github/workflows/ci.yml` | CI/CD 配置 |
+| `docs/SIGNAL_SYSTEM.md` | 信号系统文档 |
+
+### 修改文件
+
+| 文件路径 | 修改内容 |
+|----------|----------|
+| `src/components/TradePanel.tsx` | 添加风控计算器、OCO、Auto SL/TP、信号预填 |
+| `src/components/AppShell.tsx` | 集成 SignalListener |
+| `src/hooks/useBridgeStatus.ts` | 改为更新 Zustand Store |
+| `trading-bridge/src/main.py` | 添加信号文件监听器 |
+| `trading-bridge/docker/docker-compose.yml` | 添加共享卷和环境变量映射 |
+
+## 6. 下一步计划 (Phase 3 Preview)
+
+当前系统已具备坚实的基础和核心交易能力，下一阶段将聚焦于 **数据智能 (Data Intelligence)**：
+
+1.  **交易复盘体系**: 实现 MAE/MFE 可视化分析，优化止损设置。
+2.  **情绪分析**: 结合交易日记的情绪评分，生成热力图。
+3.  **策略标签**: 为每笔交易自动或手动打标 (Trend, Reversal, Breakout)，分析策略胜率。
+
+---
+*Report generated by AlphaOS AI Assistant*
+*Last Updated: 2024-11-25*

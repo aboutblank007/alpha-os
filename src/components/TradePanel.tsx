@@ -4,8 +4,8 @@ import { useState, useEffect } from 'react';
 import { Modal } from '@/components/ui/Modal';
 import { Button } from '@/components/ui/Button';
 import { Input } from '@/components/ui/Input';
-import { ChevronDown, Maximize2, MoreHorizontal, X, Minus, Plus } from 'lucide-react';
-import { useBridgeStatus } from '@/hooks/useBridgeStatus';
+import { ChevronDown, Maximize2, X, Minus, Plus, Calculator, Wand2 } from 'lucide-react';
+import { useMarketStore } from '@/store/useMarketStore';
 import { cn } from '@/lib/utils';
 import { Checkbox } from '@/components/ui/Checkbox';
 import { Select } from '@/components/ui/Select';
@@ -15,52 +15,144 @@ interface TradePanelProps {
     onClose: () => void;
     symbol: string;
     initialSide?: 'BUY' | 'SELL';
+    initialPrice?: number;
+    initialStopLoss?: number;
+    initialTakeProfit?: number;
 }
 
-export function TradePanel({ open, onClose, symbol, initialSide = 'BUY' }: TradePanelProps) {
-    const { status, isConnected } = useBridgeStatus(1000);
-    const priceData = status?.symbol_prices?.[symbol];
+export function TradePanel({ 
+    open, 
+    onClose, 
+    symbol, 
+    initialSide = 'BUY',
+    initialPrice,
+    initialStopLoss,
+    initialTakeProfit
+}: TradePanelProps) {
+    // Use Market Store directly
+    const isConnected = useMarketStore(state => state.isConnected);
+    const priceData = useMarketStore(state => state.symbolPrices[symbol]);
 
     const [units, setUnits] = useState(0.01);
-    const [takeProfitEnabled, setTakeProfitEnabled] = useState(false);
-    const [stopLossEnabled, setStopLossEnabled] = useState(false);
-    const [takeProfitPrice, setTakeProfitPrice] = useState("");
-    const [stopLossPrice, setStopLossPrice] = useState("");
-    const [activeTab, setActiveTab] = useState<'market' | 'limit' | 'stop'>('market');
-    const [pendingPrice, setPendingPrice] = useState("");
+    const [takeProfitEnabled, setTakeProfitEnabled] = useState(!!initialTakeProfit);
+    const [stopLossEnabled, setStopLossEnabled] = useState(!!initialStopLoss);
+    const [takeProfitPrice, setTakeProfitPrice] = useState(initialTakeProfit?.toString() || "");
+    const [stopLossPrice, setStopLossPrice] = useState(initialStopLoss?.toString() || "");
+    const [activeTab, setActiveTab] = useState<'market' | 'limit' | 'stop' | 'oco'>('market');
+    const [pendingPrice, setPendingPrice] = useState(initialPrice?.toString() || "");
     const [isSubmitting, setIsSubmitting] = useState(false);
     const [side, setSide] = useState<'BUY' | 'SELL'>(initialSide);
     const [validUntil, setValidUntil] = useState("手动取消前有效");
     const [error, setError] = useState<string | null>(null);
+    
+    // OCO State
+    const [ocoBuyPrice, setOcoBuyPrice] = useState("");
+    const [ocoSellPrice, setOcoSellPrice] = useState("");
+    
+    // Risk Calculator State
+    const [showCalculator, setShowCalculator] = useState(false);
+    const [riskAmount, setRiskAmount] = useState(100);
+    const [riskPercent, setRiskPercent] = useState(1);
+
+    // Determine default tab based on initialPrice
+    useEffect(() => {
+        if (open && initialPrice && priceData) {
+            const currentPrice = initialSide === 'BUY' ? priceData.ask : priceData.bid;
+            // Simple heuristic: if price is far from market, assume pending
+            if (Math.abs(initialPrice - currentPrice) > 0.0005) { // Tolerance
+                // Determine limit vs stop
+                if (initialSide === 'BUY') {
+                    setActiveTab(initialPrice < currentPrice ? 'limit' : 'stop');
+                } else {
+                    setActiveTab(initialPrice > currentPrice ? 'limit' : 'stop');
+                }
+            } else {
+                setActiveTab('market');
+            }
+        }
+    }, [open, initialPrice, priceData, initialSide]);
 
     // Reset form when opened
     useEffect(() => {
         if (open) {
             setSide(initialSide);
-            setTakeProfitPrice('');
-            setStopLossPrice('');
-            setPendingPrice('');
-            setActiveTab('market');
+            setTakeProfitPrice(initialTakeProfit?.toString() || '');
+            setStopLossPrice(initialStopLoss?.toString() || '');
+            setPendingPrice(initialPrice?.toString() || '');
+            setTakeProfitEnabled(!!initialTakeProfit);
+            setStopLossEnabled(!!initialStopLoss);
+            // activeTab logic handled above or reset to default if no initialPrice
+            if (!initialPrice) setActiveTab('market');
+            
             setIsSubmitting(false);
-            setTakeProfitEnabled(false);
-            setStopLossEnabled(false);
-            setError(null); // Clear error on open
+            setError(null); 
+            setShowCalculator(false); // Reset calculator visibility
+            setOcoBuyPrice("");
+            setOcoSellPrice("");
         }
-    }, [open, initialSide, symbol]);
+    }, [open, initialSide, symbol, initialPrice, initialStopLoss, initialTakeProfit]);
 
-    const price = priceData?.bid ?? 0; // Default to bid for generic price
+    // const price = priceData?.bid ?? 0; // Default to bid for generic price (unused)
     const bid = priceData?.bid ?? 0;
     const ask = priceData?.ask ?? 0;
     const spread = (ask - bid).toFixed(5);
 
     // Calculate dynamic tick value
-    // Standard lot (1.0) tick value is usually $1 for 1 point move in non-JPY pairs, but varies.
-    // For XAUUSD, 1 lot, 0.01 move = $1? No, 1 lot = 100 oz. 0.01 move = $1.
-    // So tick value = units * 100 * 0.01?
-    // Let's use a simplified approximation for now: $10 per lot per pip (standard forex)
-    // For XAUUSD: 1 lot, 1 pip (0.10) = $10. 
-    // So tick value = units * 10. (Very rough estimate)
     const tickValue = (units * 10).toFixed(2);
+
+    // Risk Calculation Logic
+    const calculateRisk = () => {
+        if (!stopLossPrice || !priceData) return;
+        
+        const entryPrice = activeTab === 'market' 
+            ? (side === 'BUY' ? ask : bid) 
+            : parseFloat(pendingPrice);
+            
+        const sl = parseFloat(stopLossPrice);
+        
+        if (!entryPrice || !sl) return;
+        
+        const priceDiff = Math.abs(entryPrice - sl);
+        
+        // Heuristic for Contract Size based on symbol
+        let contractSize = 100000; 
+        if (symbol.includes('XAU') || symbol.includes('Gold')) contractSize = 100;
+        if (symbol.includes('BTC') || symbol.includes('Bitcoin')) contractSize = 1;
+        if (symbol.includes('US30') || symbol.includes('DJI')) contractSize = 1; // Indices often 1 or 10
+        
+        const calculatedVolume = riskAmount / (priceDiff * contractSize);
+        
+        // Round to 2 decimal places (standard min lot 0.01)
+        const roundedVolume = Math.max(0.01, Math.floor(calculatedVolume * 100) / 100);
+        
+        setUnits(roundedVolume);
+    };
+
+    // Auto SL/TP Logic based on ATR (Simulated)
+    const applyAutoSLTP = () => {
+        // In a real app, we'd fetch ATR from backend or use indicators lib
+        // Here we use a simplified heuristic: 20 pips SL, 40 pips TP
+        const pips = 0.0001; // Assuming major pair
+        const entryPrice = activeTab === 'market' 
+            ? (side === 'BUY' ? ask : bid) 
+            : parseFloat(pendingPrice);
+            
+        if (!entryPrice) return;
+
+        const slDistance = 20 * pips;
+        const tpDistance = 40 * pips;
+
+        if (side === 'BUY') {
+            setStopLossPrice((entryPrice - slDistance).toFixed(5));
+            setTakeProfitPrice((entryPrice + tpDistance).toFixed(5));
+        } else {
+            setStopLossPrice((entryPrice + slDistance).toFixed(5));
+            setTakeProfitPrice((entryPrice - tpDistance).toFixed(5));
+        }
+        
+        setStopLossEnabled(true);
+        setTakeProfitEnabled(true);
+    };
 
     const handleSubmit = async () => {
         if (!isConnected) {
@@ -68,20 +160,37 @@ export function TradePanel({ open, onClose, symbol, initialSide = 'BUY' }: Trade
             return;
         }
         setIsSubmitting(true);
-        setError(null); // Clear previous errors
+        setError(null); 
 
         try {
             interface TradePayload {
-                action: 'BUY' | 'SELL';
+                action: 'BUY' | 'SELL' | 'OCO'; // Add OCO
                 symbol: string;
                 volume: number;
                 sl: number;
                 tp: number;
                 type?: string;
                 price?: number;
+                oco_buy_price?: number; // Add OCO params
+                oco_sell_price?: number;
             }
 
-            const payload: TradePayload = {
+            let payload: TradePayload;
+
+            if (activeTab === 'oco') {
+                if (!ocoBuyPrice || !ocoSellPrice) throw new Error('请输入 OCO 买入和卖出价格');
+                payload = {
+                    action: 'OCO',
+                    symbol: symbol.replace('/', '').replace('_', ''),
+                    volume: units,
+                    sl: stopLossEnabled && stopLossPrice ? parseFloat(stopLossPrice) : 0,
+                    tp: takeProfitEnabled && takeProfitPrice ? parseFloat(takeProfitPrice) : 0,
+                    oco_buy_price: parseFloat(ocoBuyPrice),
+                    oco_sell_price: parseFloat(ocoSellPrice),
+                    type: 'OCO'
+                };
+            } else {
+                payload = {
                 action: side,
                 symbol: symbol.replace('/', '').replace('_', ''),
                 volume: units,
@@ -93,8 +202,7 @@ export function TradePanel({ open, onClose, symbol, initialSide = 'BUY' }: Trade
                 if (!pendingPrice) throw new Error('请输入挂单价格');
                 payload.type = 'PENDING';
                 payload.price = parseFloat(pendingPrice);
-                // Note: Backend needs to distinguish Limit vs Stop based on logic or extra field.
-                // Current backend logic infers based on price vs market price.
+                }
             }
 
             const res = await fetch('/api/bridge/execute', {
@@ -133,11 +241,17 @@ export function TradePanel({ open, onClose, symbol, initialSide = 'BUY' }: Trade
                         <span className="font-semibold text-sm text-slate-900">{symbol}</span>
                     </div>
                     <div className="flex items-center gap-1">
-                        <Button variant="ghost" size="sm" className="h-7 w-7 p-0 text-slate-400 hover:bg-slate-50">
-                            <Maximize2 className="h-3.5 w-3.5" />
+                        <Button 
+                            variant="ghost" 
+                            size="sm" 
+                            className={`h-7 w-7 p-0 hover:bg-slate-50 ${showCalculator ? 'text-blue-600 bg-blue-50' : 'text-slate-400'}`}
+                            onClick={() => setShowCalculator(!showCalculator)}
+                            title="风险计算器"
+                        >
+                            <Calculator className="h-3.5 w-3.5" />
                         </Button>
                         <Button variant="ghost" size="sm" className="h-7 w-7 p-0 text-slate-400 hover:bg-slate-50">
-                            <MoreHorizontal className="h-3.5 w-3.5" />
+                            <Maximize2 className="h-3.5 w-3.5" />
                         </Button>
                         <Button variant="ghost" size="sm" className="h-7 w-7 p-0 text-slate-400 hover:bg-slate-50 hover:text-slate-700" onClick={onClose}>
                             <X className="h-4 w-4" />
@@ -145,13 +259,60 @@ export function TradePanel({ open, onClose, symbol, initialSide = 'BUY' }: Trade
                     </div>
                 </div>
 
+                {/* Risk Calculator Overlay */}
+                {showCalculator && (
+                    <div className="bg-slate-50 p-3 border-b border-slate-100 animate-in slide-in-from-top-2 duration-200">
+                        <div className="text-xs font-semibold text-slate-700 mb-2 flex justify-between items-center">
+                            <span>风险计算器</span>
+                            <span className="text-[10px] font-normal text-slate-500">基于止损距离计算手数</span>
+                        </div>
+                        <div className="grid grid-cols-2 gap-2 mb-2">
+                            <div>
+                                <label className="text-[10px] text-slate-500 mb-1 block">风险金额 ($)</label>
+                                <Input 
+                                    type="number" 
+                                    value={riskAmount} 
+                                    onChange={(e) => setRiskAmount(Number(e.target.value))}
+                                    className="h-8 text-sm bg-white" 
+                                />
+                            </div>
+                            <div>
+                                <label className="text-[10px] text-slate-500 mb-1 block">或者 账户 %</label>
+                                <Input 
+                                    type="number" 
+                                    value={riskPercent} 
+                                    onChange={(e) => {
+                                        setRiskPercent(Number(e.target.value));
+                                        // Ideally calculate amount from balance if available
+                                    }}
+                                    className="h-8 text-sm bg-white" 
+                                />
+                            </div>
+                        </div>
+                        <Button 
+                            size="sm" 
+                            className="w-full h-8 text-xs bg-blue-600 hover:bg-blue-700 text-white"
+                            onClick={() => {
+                                if (!stopLossPrice) {
+                                    setError("请先设置止损价格以计算风险");
+                                    return;
+                                }
+                                calculateRisk();
+                                setShowCalculator(false);
+                            }}
+                        >
+                            应用计算结果
+                        </Button>
+                    </div>
+                )}
+
                 {/* Price Display */}
                 <div className="grid grid-cols-2 gap-2 p-3">
                     <button
-                        onClick={() => setSide("SELL")}
+                        onClick={() => { setSide("SELL"); if(activeTab === 'oco') setActiveTab('market'); }}
                         className={cn(
                             "rounded-lg p-2.5 transition-all text-left border",
-                            side === "SELL"
+                            side === "SELL" && activeTab !== 'oco'
                                 ? "bg-red-500 text-white border-red-600 shadow-sm"
                                 : "bg-red-50/50 text-red-600 border-transparent hover:bg-red-50"
                         )}
@@ -161,10 +322,10 @@ export function TradePanel({ open, onClose, symbol, initialSide = 'BUY' }: Trade
                         <div className="text-[10px] opacity-75">价差: {spread}</div>
                     </button>
                     <button
-                        onClick={() => setSide("BUY")}
+                        onClick={() => { setSide("BUY"); if(activeTab === 'oco') setActiveTab('market'); }}
                         className={cn(
                             "rounded-lg p-2.5 transition-all text-left border",
-                            side === "BUY"
+                            side === "BUY" && activeTab !== 'oco'
                                 ? "bg-blue-500 text-white border-blue-600 shadow-sm"
                                 : "bg-blue-50/50 text-blue-600 border-transparent hover:bg-blue-50"
                         )}
@@ -178,16 +339,16 @@ export function TradePanel({ open, onClose, symbol, initialSide = 'BUY' }: Trade
                 {/* Tabs */}
                 <div className="px-3">
                     <div className="flex border-b border-slate-100 mb-3">
-                        {['market', 'limit', 'stop'].map((tab) => (
+                        {['market', 'limit', 'stop', 'oco'].map((tab) => (
                             <button
                                 key={tab}
-                                onClick={() => setActiveTab(tab as 'market' | 'limit' | 'stop')}
+                                onClick={() => setActiveTab(tab as 'market' | 'limit' | 'stop' | 'oco')}
                                 className={cn(
                                     "flex-1 pb-2 text-xs font-medium border-b-2 transition-colors capitalize",
                                     activeTab === tab ? "border-blue-500 text-blue-600" : "border-transparent text-slate-400 hover:text-slate-600"
                                 )}
                             >
-                                {{ 'market': '市价', 'limit': '限价', 'stop': '止损' }[tab]}
+                                {{ 'market': '市价', 'limit': '限价', 'stop': '止损', 'oco': 'OCO' }[tab]}
                             </button>
                         ))}
                     </div>
@@ -209,6 +370,33 @@ export function TradePanel({ open, onClose, symbol, initialSide = 'BUY' }: Trade
                                     />
                                     <div className="flex items-center justify-center px-2 h-9 border border-slate-200 rounded-md bg-slate-50 text-xs text-slate-500">
                                         Auto
+                                    </div>
+                                </div>
+                            </div>
+                        )}
+
+                        {/* OCO Inputs */}
+                        {activeTab === 'oco' && (
+                            <div className="space-y-3 bg-slate-50 p-2 rounded-md border border-slate-100">
+                                <div className="text-xs text-slate-500 font-medium">突破策略 (One Cancels Other)</div>
+                                <div className="grid grid-cols-2 gap-2">
+                                    <div>
+                                        <label className="text-[10px] text-slate-500 mb-1 block text-blue-600 font-medium">Buy Stop</label>
+                                        <Input
+                                            value={ocoBuyPrice}
+                                            onChange={(e) => setOcoBuyPrice(e.target.value)}
+                                            className="h-8 text-sm bg-white"
+                                            placeholder={`> ${ask}`}
+                                        />
+                                    </div>
+                                    <div>
+                                        <label className="text-[10px] text-slate-500 mb-1 block text-red-600 font-medium">Sell Stop</label>
+                                        <Input
+                                            value={ocoSellPrice}
+                                            onChange={(e) => setOcoSellPrice(e.target.value)}
+                                            className="h-8 text-sm bg-white"
+                                            placeholder={`< ${bid}`}
+                                        />
                                     </div>
                                 </div>
                             </div>
@@ -255,7 +443,19 @@ export function TradePanel({ open, onClose, symbol, initialSide = 'BUY' }: Trade
 
                         {/* Exit Section */}
                         <div>
-                            <h3 className="text-xs font-semibold mb-2 text-slate-800 mt-4">退出策略</h3>
+                            <div className="flex justify-between items-center mb-2 mt-4">
+                                <h3 className="text-xs font-semibold text-slate-800">退出策略</h3>
+                                <Button 
+                                    variant="ghost" 
+                                    size="sm" 
+                                    className="h-5 text-[10px] text-blue-600 hover:bg-blue-50 px-2"
+                                    onClick={applyAutoSLTP}
+                                    title="自动设置 2:1 盈亏比"
+                                >
+                                    <Wand2 size={10} className="mr-1" />
+                                    Auto
+                                </Button>
+                            </div>
 
                             {/* Take Profit */}
                             <div className="space-y-1.5 mb-3">
@@ -320,8 +520,8 @@ export function TradePanel({ open, onClose, symbol, initialSide = 'BUY' }: Trade
                             </div>
                         </div>
 
-                        {/* Valid Until (Only for Pending) */}
-                        {(activeTab === 'limit' || activeTab === 'stop') && (
+                        {/* Valid Until (Only for Pending/OCO) */}
+                        {(activeTab === 'limit' || activeTab === 'stop' || activeTab === 'oco') && (
                             <div className="space-y-1.5 mt-2">
                                 <div className="text-xs text-slate-500">有效时间</div>
                                 <Select value={validUntil} onChange={(e) => setValidUntil(e.target.value)} className="h-9 text-sm bg-white text-slate-900 border-slate-200 px-2 py-0">
@@ -356,13 +556,17 @@ export function TradePanel({ open, onClose, symbol, initialSide = 'BUY' }: Trade
                                 disabled={!isConnected || isSubmitting}
                                 className={cn(
                                     "w-full h-11 text-white rounded-lg transition-all hover:opacity-90 shadow-md",
-                                    side === "SELL" ? "bg-red-500 hover:bg-red-600 shadow-red-500/20" : "bg-blue-500 hover:bg-blue-600 shadow-blue-500/20"
+                                    activeTab === 'oco'
+                                        ? "bg-slate-800 hover:bg-slate-700"
+                                        : (side === "SELL" ? "bg-red-500 hover:bg-red-600 shadow-red-500/20" : "bg-blue-500 hover:bg-blue-600 shadow-blue-500/20")
                                 )}
                             >
                                 <div className="flex flex-col items-center gap-0.5">
-                                    <span className="text-sm font-bold leading-none">{side === "SELL" ? "卖出" : "买入"}</span>
+                                    <span className="text-sm font-bold leading-none">
+                                        {activeTab === 'oco' ? '放置 OCO 订单' : (side === "SELL" ? "卖出" : "买入")}
+                                    </span>
                                     <span className="text-[10px] opacity-90 font-normal leading-none">
-                                        {units} {symbol} @ {activeTab === 'market' ? 'MKT' : pendingPrice || '---'}
+                                        {units} {symbol} @ {activeTab === 'market' ? 'MKT' : (activeTab === 'oco' ? 'Breakout' : pendingPrice || '---')}
                                     </span>
                                 </div>
                             </Button>
@@ -373,4 +577,3 @@ export function TradePanel({ open, onClose, symbol, initialSide = 'BUY' }: Trade
         </Modal>
     );
 }
-

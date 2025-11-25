@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import { Trade } from '@/lib/supabase';
 import { ArrowUpRight, ArrowDownRight, Filter } from 'lucide-react';
 import { TableVirtuoso } from 'react-virtuoso';
@@ -6,10 +6,61 @@ import { StatusBadge } from './ui/StatusBadge';
 import { cn } from '@/lib/utils';
 
 interface RecentTradesProps {
-    trades: Trade[];
+    trades?: Trade[]; // Keep optional for compatibility, but we'll fetch internally if not fully managed
 }
 
-export function RecentTrades({ trades }: RecentTradesProps) {
+export function RecentTrades({ trades: propTrades }: RecentTradesProps) {
+    const [trades, setTrades] = useState<Trade[]>(propTrades || []);
+    const [loading, setLoading] = useState(false);
+    const [totalCount, setTotalCount] = useState(0);
+    const [page, setPage] = useState(0);
+    const PAGE_Size = 50; // Consistent with API default or customizable
+
+    // Fetch data function
+    const loadTrades = useCallback(async (pageNum: number) => {
+        setLoading(true);
+        try {
+            // Assuming we want all closed trades for "Recent Trades" or just all trades? 
+            // Usually recent trades implies history (closed) or log. 
+            // Let's fetch all for now, or filter by status='closed' if that's the intent. 
+            // The original component showed all.
+            const res = await fetch(`/api/trades?page=${pageNum}&pageSize=${PAGE_Size}&status=closed`);
+            const data = await res.json();
+            
+            if (data.data) {
+                if (pageNum === 0) {
+                    setTrades(data.data);
+                } else {
+                    setTrades(prev => [...prev, ...data.data]);
+                }
+                setTotalCount(data.count || 0);
+            }
+        } catch (error) {
+            console.error("Failed to load trades", error);
+        } finally {
+            setLoading(false);
+        }
+    }, []);
+
+    // Initial load if props not provided or to refresh
+    useEffect(() => {
+        if (!propTrades) {
+            loadTrades(0);
+        } else {
+            setTrades(propTrades);
+            setTotalCount(propTrades.length);
+        }
+    }, [propTrades, loadTrades]);
+
+    // Infinite scroll handler
+    const loadMore = useCallback(() => {
+        if (!loading && trades.length < totalCount) {
+            const nextPage = page + 1;
+            setPage(nextPage);
+            loadTrades(nextPage);
+        }
+    }, [loading, trades.length, totalCount, page, loadTrades]);
+
     return (
         <div className="glass-panel rounded-xl p-6 overflow-hidden flex flex-col h-full">
             <div className="flex items-center justify-between mb-6 shrink-0">
@@ -19,23 +70,26 @@ export function RecentTrades({ trades }: RecentTradesProps) {
                         <Filter size={16} />
                     </button>
                     <button className="text-xs px-3 py-1.5 rounded-lg bg-white/5 hover:bg-white/10 text-slate-300 transition-all font-medium border border-surface-border">
-                        {trades.length} 笔记录
+                        {totalCount} 笔记录
                     </button>
                 </div>
             </div>
 
-            <div className="flex-1 min-h-0">
-                {trades.length === 0 ? (
+            <div className="flex-1 min-h-0 relative">
+                {trades.length === 0 && !loading ? (
                     <div className="flex flex-col items-center justify-center h-full text-slate-500">
                         <p className="text-sm font-medium">暂无交易记录</p>
                     </div>
                 ) : (
                     <TableVirtuoso
                         data={trades}
+                        endReached={loadMore}
+                        overscan={200}
                         className="custom-scrollbar"
                         components={{
                             Table: (props) => <table {...props} className="w-full text-left text-sm border-collapse" />,
-                            TableRow: (props) => <tr {...props} className="group hover:bg-white/[0.02] transition-colors border-b border-surface-border/50 last:border-0" />
+                            TableRow: (props) => <tr {...props} className="group hover:bg-white/[0.02] transition-colors border-b border-surface-border/50 last:border-0" />,
+                            Footer: () => loading ? <div className="p-4 text-center text-xs text-slate-500">加载中...</div> : null
                         }}
                         fixedHeaderContent={() => (
                             <tr className="text-xs uppercase text-slate-500 font-medium border-b border-surface-border bg-[#030712] z-10">

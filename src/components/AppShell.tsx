@@ -14,15 +14,20 @@ import {
 } from 'lucide-react';
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
-import { useBridgeStatus } from '@/hooks/useBridgeStatus';
+import { useBridgeSync } from '@/hooks/useBridgeSync';
+import { useTradeStore } from '@/store/useTradeStore';
+import { SignalListener } from '@/components/SignalListener'; // Import SignalListener
 
 export function AppShell({ children }: { children: React.ReactNode }) {
   const [isSidebarOpen, setIsSidebarOpen] = useState(true);
   const [scrolled, setScrolled] = useState(false);
   const pathname = usePathname();
 
-  // 使用 MT5 实时数据
-  const { status } = useBridgeStatus();
+  // Start Bridge Sync (Polling)
+  useBridgeSync();
+
+  // Get Account Data from Store
+  const account = useTradeStore(state => state.account);
 
   // Handle scroll effect for header
   useEffect(() => {
@@ -64,6 +69,9 @@ export function AppShell({ children }: { children: React.ReactNode }) {
           }`}
         onClick={() => setIsSidebarOpen(false)}
       />
+
+      {/* Global Signal Listener */}
+      <SignalListener />
 
       {/* Sidebar */}
       <aside
@@ -196,12 +204,12 @@ export function AppShell({ children }: { children: React.ReactNode }) {
               <span className="text-[10px] uppercase tracking-wider text-slate-500 font-medium">净资产 (MT5)</span>
               <div className="flex items-baseline gap-2">
                 <span className="text-sm font-bold text-white font-mono tracking-tight">
-                  ${status?.last_mt5_update?.account?.equity ? status.last_mt5_update.account.equity.toFixed(2) : '---'}
+                  ${account?.equity ? account.equity.toFixed(2) : '---'}
                 </span>
-                {status?.last_mt5_update?.account && status.last_mt5_update.account.equity > 0 && (
-                  <span className={`text-[10px] font-medium ${status.last_mt5_update.account.equity >= status.last_mt5_update.account.balance ? 'text-accent-success' : 'text-accent-danger'
+                {account && account.equity > 0 && (
+                  <span className={`text-[10px] font-medium ${account.equity >= account.balance ? 'text-accent-success' : 'text-accent-danger'
                     }`}>
-                    {((status.last_mt5_update.account.equity - status.last_mt5_update.account.balance) / status.last_mt5_update.account.balance * 100).toFixed(2)}%
+                    {((account.equity - account.balance) / account.balance * 100).toFixed(2)}%
                   </span>
                 )}
               </div>
