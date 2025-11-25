@@ -1,5 +1,4 @@
 import React, { memo, useState } from 'react';
-import { Loader2, Maximize2 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { TradePanel } from '@/components/TradePanel';
 
@@ -20,12 +19,10 @@ interface SymbolRowProps {
     bid?: number;
     ask?: number;
     isConnected: boolean;
-    executingSide: 'BUY' | 'SELL' | null;
-    onTrade: (symbol: string, side: 'BUY' | 'SELL', e: React.MouseEvent) => void;
     onSelect: (symbol: string) => void;
 }
 
-    const renderPrice = (price: number | undefined, symbol: string) => {
+const renderPrice = (price: number | undefined, symbol: string) => {
     if (price === undefined) return <span className="text-lg">---</span>;
 
     let digits = 5;
@@ -55,8 +52,6 @@ export const SymbolRow = memo(function SymbolRow({
     bid,
     ask,
     isConnected,
-    executingSide,
-    onTrade,
     onSelect
 }: SymbolRowProps) {
     const [showTradePanel, setShowTradePanel] = useState(false);
@@ -93,9 +88,7 @@ export const SymbolRow = memo(function SymbolRow({
                     <button
                         className={cn(
                             "flex flex-col items-center justify-center flex-1 aspect-[2/1] rounded transition-all relative overflow-hidden mt-1",
-                            executingSide === 'SELL' 
-                                ? 'bg-slate-700 cursor-wait' 
-                                : 'bg-[#ff5252] hover:brightness-110 active:scale-95'
+                            'bg-[#ff5252] hover:brightness-110 active:scale-95'
                         )}
                         style={{ containerType: 'size' }}
                         onClick={(e) => {
@@ -103,25 +96,19 @@ export const SymbolRow = memo(function SymbolRow({
                             setTradeSide('SELL');
                             setShowTradePanel(true);
                         }}
-                        disabled={!isConnected || !!executingSide}
+                        disabled={!isConnected}
                     >
-                        {executingSide === 'SELL' ? (
-                            <Loader2 className="animate-spin text-white" size={16} />
-                        ) : (
-                            <>
-                                <div className="text-white leading-none drop-shadow-md w-full">{renderPrice(bid, symbol)}</div>
-                                <div style={{ fontSize: '8cqw' }} className="font-bold text-white/60 uppercase tracking-wider mt-[2cqw]">Sell</div>
-                            </>
-                        )}
+                        <>
+                            <div className="text-white leading-none drop-shadow-md w-full">{renderPrice(bid, symbol)}</div>
+                            <div style={{ fontSize: '8cqw' }} className="font-bold text-white/60 uppercase tracking-wider mt-[2cqw]">Sell</div>
+                        </>
                     </button>
 
                     {/* Ask Box (Buy) */}
                     <button
                         className={cn(
                             "flex flex-col items-center justify-center flex-1 aspect-[2/1] rounded transition-all relative overflow-hidden mt-1",
-                            executingSide === 'BUY' 
-                                ? 'bg-slate-700 cursor-wait' 
-                                : 'bg-[#00bfa5] hover:brightness-110 active:scale-95'
+                            'bg-[#00bfa5] hover:brightness-110 active:scale-95'
                         )}
                         style={{ containerType: 'size' }}
                         onClick={(e) => {
@@ -129,23 +116,19 @@ export const SymbolRow = memo(function SymbolRow({
                             setTradeSide('BUY');
                             setShowTradePanel(true);
                         }}
-                        disabled={!isConnected || !!executingSide}
+                        disabled={!isConnected}
                     >
-                        {executingSide === 'BUY' ? (
-                            <Loader2 className="animate-spin text-white" size={16} />
-                        ) : (
-                            <>
-                                <div className="text-white leading-none drop-shadow-md w-full">{renderPrice(ask, symbol)}</div>
-                                <div style={{ fontSize: '8cqw' }} className="font-bold text-white/60 uppercase tracking-wider mt-[2cqw]">Buy</div>
-                            </>
-                        )}
+                        <>
+                            <div className="text-white leading-none drop-shadow-md w-full">{renderPrice(ask, symbol)}</div>
+                            <div style={{ fontSize: '8cqw' }} className="font-bold text-white/60 uppercase tracking-wider mt-[2cqw]">Buy</div>
+                        </>
                     </button>
                 </div>
             </div>
 
-            <TradePanel 
-                open={showTradePanel} 
-                onClose={() => setShowTradePanel(false)} 
+            <TradePanel
+                open={showTradePanel}
+                onClose={() => setShowTradePanel(false)}
                 symbol={symbol}
                 initialSide={tradeSide}
             />

@@ -60,17 +60,16 @@ export function AppShell({ children }: { children: React.ReactNode }) {
     <div className="min-h-screen bg-background text-foreground selection:bg-accent-primary/30">
       {/* Mobile Overlay */}
       <div
-        className={`fixed inset-0 z-40 bg-black/60 backdrop-blur-sm transition-opacity duration-500 ${
-          isMobile && isSidebarOpen ? 'opacity-100 pointer-events-auto' : 'opacity-0 pointer-events-none'
-        }`}
+        className={`fixed inset-0 z-40 bg-black/60 backdrop-blur-sm transition-opacity duration-500 ${isMobile && isSidebarOpen ? 'opacity-100 pointer-events-auto' : 'opacity-0 pointer-events-none'
+          }`}
         onClick={() => setIsSidebarOpen(false)}
       />
 
       {/* Sidebar */}
       <aside
         className={`fixed left-0 top-0 z-50 h-screen border-r border-white/5 bg-surface-glass-strong backdrop-blur-xl transition-all duration-500 cubic-bezier(0.2, 0, 0, 1) ${isMobile
-            ? (isSidebarOpen ? 'translate-x-0 w-[280px]' : '-translate-x-full w-[280px]')
-            : ''
+          ? (isSidebarOpen ? 'translate-x-0 w-[280px]' : '-translate-x-full w-[280px]')
+          : ''
           }`}
         style={!isMobile ? { width: isSidebarOpen ? '280px' : '80px' } : undefined}
       >
@@ -197,16 +196,12 @@ export function AppShell({ children }: { children: React.ReactNode }) {
               <span className="text-[10px] uppercase tracking-wider text-slate-500 font-medium">净资产 (MT5)</span>
               <div className="flex items-baseline gap-2">
                 <span className="text-sm font-bold text-white font-mono tracking-tight">
-                  ${status?.account?.equity ? status.account.equity.toFixed(2) : '---'}
+                  ${status?.last_mt5_update?.account?.equity ? status.last_mt5_update.account.equity.toFixed(2) : '---'}
                 </span>
-                {status?.account && status.account.equity > 0 && (
-                  <span className={`text-[10px] font-medium ${
-                    status.account.equity >= status.account.balance 
-                      ? 'text-accent-success' 
-                      : 'text-accent-danger'
-                  }`}>
-                    {status.account.equity >= status.account.balance ? '+' : ''}
-                    {(status.account.equity - status.account.balance).toFixed(2)}
+                {status?.last_mt5_update?.account && status.last_mt5_update.account.equity > 0 && (
+                  <span className={`text-[10px] font-medium ${status.last_mt5_update.account.equity >= status.last_mt5_update.account.balance ? 'text-accent-success' : 'text-accent-danger'
+                    }`}>
+                    {((status.last_mt5_update.account.equity - status.last_mt5_update.account.balance) / status.last_mt5_update.account.balance * 100).toFixed(2)}%
                   </span>
                 )}
               </div>

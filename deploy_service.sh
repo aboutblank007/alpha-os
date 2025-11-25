@@ -20,7 +20,7 @@ echo "📂 Syncing codebase..."
 # Ensure remote directory exists
 ssh $SERVER "mkdir -p $REMOTE_DIR" || { echo "❌ Failed to create remote directory. Check SSH connection."; exit 1; }
 
-rsync -avz --progress \
+rsync -avz --progress --delete \
     --exclude 'node_modules' \
     --exclude '.next' \
     --exclude '.git' \
@@ -29,6 +29,9 @@ rsync -avz --progress \
     --exclude 'terminals' \
     --exclude '文档' \
     ./ $SERVER:$REMOTE_DIR/
+
+# Fix permissions for MQL5 files (so MT5 container can read/write/compile)
+ssh $SERVER "chmod -R 777 $REMOTE_DIR/trading-bridge/mql5"
 
 # 2. Copy .env if it exists (Always good to ensure env is fresh)
 if [ -f .env.local ]; then

@@ -10,33 +10,13 @@ interface MarketWatchProps {
     onSymbolSelect?: (symbol: string) => void;
 }
 
-export function MarketWatch({ isConnected: propIsConnected, onTrade, onSymbolSelect }: MarketWatchProps) {
-    const [executing, setExecuting] = useState<string | null>(null);
-    const { status, isConnected: bridgeConnected, activeSymbols, symbolPrices } = useBridgeStatus(1000);
-    const executionLock = useRef(false); // Add ref lock to prevent rapid clicks
+export function MarketWatch({ isConnected: propIsConnected, onSymbolSelect }: MarketWatchProps) {
+    const { isConnected: bridgeConnected, activeSymbols, symbolPrices } = useBridgeStatus(1000);
 
     // Use bridge connection status if prop is not provided or overrides
     const isConnected = propIsConnected && bridgeConnected;
 
-    const handleTrade = async (symbol: string, side: 'BUY' | 'SELL', e: React.MouseEvent) => {
-        e.stopPropagation();
-        if (!onTrade || executionLock.current) return; // Check lock
-        
-        executionLock.current = true; // Set lock immediately
-        setExecuting(`${symbol}-${side}`);
-        
-        try {
-            await onTrade(symbol, side);
-        } catch (e) {
-            console.error(e);
-        } finally {
-            setExecuting(null);
-            // Add a small delay before unlocking to prevent accidental double taps
-            setTimeout(() => {
-                executionLock.current = false;
-            }, 500);
-        }
-    };
+
 
     return (
         <div className="glass-panel p-0 rounded-xl h-full flex flex-col overflow-hidden bg-[#1e222d]">
@@ -51,13 +31,10 @@ export function MarketWatch({ isConnected: propIsConnected, onTrade, onSymbolSel
                 ) : (
                     activeSymbols.map((symbol) => {
                         const priceData = symbolPrices?.[symbol];
-                        const bid = priceData?.bid;
-                        const ask = priceData?.ask;
-                        
-                        // Determine if this specific symbol is executing
-                        let executingSide: 'BUY' | 'SELL' | null = null;
-                        if (executing === `${symbol}-BUY`) executingSide = 'BUY';
-                        else if (executing === `${symbol}-SELL`) executingSide = 'SELL';
+                        const bid = priceData?.bid ?? 0;
+                        const ask = priceData?.ask ?? 0;
+
+
 
                         return (
                             <SymbolRow
@@ -66,9 +43,7 @@ export function MarketWatch({ isConnected: propIsConnected, onTrade, onSymbolSel
                                 bid={bid}
                                 ask={ask}
                                 isConnected={!!isConnected}
-                                executingSide={executingSide}
-                                onTrade={handleTrade}
-                                onSelect={onSymbolSelect || (() => {})}
+                                onSelect={onSymbolSelect || (() => { })}
                             />
                         );
                     })

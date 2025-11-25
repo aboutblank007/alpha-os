@@ -6,7 +6,7 @@ const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!;
 const supabase = createClient(supabaseUrl, supabaseAnonKey);
 
 // GET - 获取账户余额和净资产
-export async function GET(request: Request) {
+export async function GET() {
   try {
     // 获取账户信息（使用第一个账户）
     const { data: account, error: accountError } = await supabase
@@ -74,10 +74,11 @@ export async function GET(request: Request) {
       open_positions_pnl: parseFloat(totalOpenPnl.toFixed(2)),
       open_positions_count: openTrades?.length || 0,
     });
-  } catch (error: any) {
+  } catch (error: unknown) {
     console.error('获取账户余额错误:', error);
+    const errorMessage = error instanceof Error ? error.message : String(error);
     return NextResponse.json(
-      { error: '获取账户余额失败: ' + error.message },
+      { error: '获取账户余额失败: ' + errorMessage },
       { status: 500 }
     );
   }

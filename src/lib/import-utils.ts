@@ -14,7 +14,7 @@ export interface CSVTradeRow {
     commission: number;
     swap: number;
     orderId: string;
-    raw: any;
+    raw: Record<string, string>;
 }
 
 export interface ReconstructedTrade {
@@ -52,15 +52,15 @@ function estimateContractSize(symbol: string): number {
     // Forex (Standard Lot = 100,000 units)
     if (s.includes('JPY') || s.includes('EUR') || s.includes('GBP') || s.includes('AUD') || s.includes('NZD') || s.includes('CAD') || s.includes('CHF')) return 100000;
     // Crypto (Usually 1, sometimes 10 or 100, but ThinkMarkets 0.1 -> 0.1 seems to imply 1)
-    if (s.includes('BTC') || s.includes('ETH')) return 1; 
+    if (s.includes('BTC') || s.includes('ETH')) return 1;
     // Indices
-    if (s.includes('US30') || s.includes('NAS100') || s.includes('SPX500') || s.includes('GER30') || s.includes('UK100')) return 1; 
-    
+    if (s.includes('US30') || s.includes('NAS100') || s.includes('SPX500') || s.includes('GER30') || s.includes('UK100')) return 1;
+
     return 100000; // Default assumption
 }
 
 // Custom robust CSV parser
-function parseCSV(text: string): any[] {
+function parseCSV(text: string): Record<string, string>[] {
     const lines = text.split('\n');
     const result = [];
     const headers = parseCSVLine(lines[0]).map(h => h.trim());
@@ -68,11 +68,11 @@ function parseCSV(text: string): any[] {
     for (let i = 1; i < lines.length; i++) {
         const line = lines[i].trim();
         if (!line) continue;
-        
+
         const values = parseCSVLine(line);
         if (values.length === 0) continue;
 
-        const record: any = {};
+        const record: Record<string, string> = {};
         headers.forEach((header, index) => {
             record[header] = values[index];
         });
@@ -85,7 +85,7 @@ function parseCSVLine(line: string): string[] {
     const values = [];
     let current = '';
     let inQuotes = false;
-    
+
     for (let i = 0; i < line.length; i++) {
         const char = line[i];
         if (char === '"') {
@@ -105,7 +105,7 @@ export function parseThinkMarketsCSV(csvContent: string): CSVTradeRow[] {
     const content = csvContent.replace(/^\uFEFF/, '');
     const records = parseCSV(content);
 
-    return records.map((record: any) => {
+    return records.map((record: Record<string, string>) => {
         const symbol = record['商品代码'] || record['Symbol'];
         const sideStr = record['买/卖'] || record['Side'];
         const type = record['类型'] || record['Type'];
@@ -151,7 +151,7 @@ export function parseThinkMarketsCSV(csvContent: string): CSVTradeRow[] {
             orderId,
             raw: record
         };
-    }).filter((row: CSVTradeRow | null) => row !== null && (row.status === '已成交' || row.status === 'Filled'));
+    }).filter((row): row is CSVTradeRow => row !== null && (row.status === '已成交' || row.status === 'Filled'));
 }
 
 export function reconstructTrades(rows: CSVTradeRow[]): ReconstructedTrade[] {
@@ -168,14 +168,14 @@ export function reconstructTrades(rows: CSVTradeRow[]): ReconstructedTrade[] {
             const openSide = row.side === 'buy' ? 'sell' : 'buy';
             const queue = openPositions[row.symbol] || [];
             let remainingCloseQty = row.normalizedQuantity;
-            
+
             let i = 0;
             while (i < queue.length && remainingCloseQty > 0.000001) {
                 const openOrder = queue[i];
-                
+
                 if (openOrder.side === openSide) {
                     const matchQty = Math.min(remainingCloseQty, openOrder.normalizedQuantity);
-                    
+
                     trades.push({
                         symbol: row.symbol,
                         side: openSide,
@@ -192,10 +192,10 @@ export function reconstructTrades(rows: CSVTradeRow[]): ReconstructedTrade[] {
                         related_order_ids: [openOrder.orderId, row.orderId],
                         notes: `Matched ${openOrder.orderId} -> ${row.orderId}`
                     });
-                    
+
                     remainingCloseQty -= matchQty;
                     openOrder.normalizedQuantity -= matchQty;
-                    
+
                     if (openOrder.normalizedQuantity < 0.000001) {
                         queue.splice(i, 1);
                     } else {
@@ -205,7 +205,7 @@ export function reconstructTrades(rows: CSVTradeRow[]): ReconstructedTrade[] {
                     i++;
                 }
             }
-            
+
             if (remainingCloseQty > 0.000001) {
                 // Unmatched / Partial History
                 // Estimate Entry Price based on PnL
@@ -217,22 +217,22 @@ export function reconstructTrades(rows: CSVTradeRow[]): ReconstructedTrade[] {
                 // But here row.commission is parsed as number. If it's negative in CSV, it's negative here.
                 // PnL_Net = PnL_Gross + Comm + Swap.
                 // PnL_Gross = PnL_Net - Comm - Swap.
-                
+
                 const proratedPnl = row.pnl * (remainingCloseQty / row.normalizedQuantity);
                 const proratedComm = row.commission * (remainingCloseQty / row.normalizedQuantity);
                 const proratedSwap = row.swap * (remainingCloseQty / row.normalizedQuantity);
-                
+
                 const grossPnl = proratedPnl - proratedComm - proratedSwap;
-                
+
                 // PnL = (Exit - Entry) * Vol * Size (Buy) -> Entry = Exit - PnL/(Vol*Size)
                 // PnL = (Entry - Exit) * Vol * Size (Sell) -> Entry = Exit + PnL/(Vol*Size)
-                
+
                 // openSide is the side of the OPEN trade.
                 // row.side is the side of the CLOSE trade.
-                
+
                 let estimatedEntryPrice = 0;
                 const priceDelta = grossPnl / (remainingCloseQty * contractSize);
-                
+
                 if (openSide === 'buy') {
                     // Was Long, now Closing (Selling)
                     // Profit = (Exit - Entry) ...
@@ -244,7 +244,7 @@ export function reconstructTrades(rows: CSVTradeRow[]): ReconstructedTrade[] {
                     // Entry = Exit + Delta
                     estimatedEntryPrice = row.price + priceDelta;
                 }
-                
+
                 // Sanity check: Price cannot be negative
                 if (estimatedEntryPrice < 0) estimatedEntryPrice = 0;
 
@@ -265,13 +265,13 @@ export function reconstructTrades(rows: CSVTradeRow[]): ReconstructedTrade[] {
                     notes: 'Partial/Unmatched History (Estimated Entry)'
                 });
             }
-            
+
         } else {
             if (!openPositions[row.symbol]) openPositions[row.symbol] = [];
             // Clone to avoid reference issues if needed, but here we just push
-            openPositions[row.symbol].push({ ...row }); 
+            openPositions[row.symbol].push({ ...row });
         }
     }
-    
+
     return trades;
 }

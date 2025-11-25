@@ -116,6 +116,7 @@ export default function DashboardPage() {
         return () => {
             supabase.removeChannel(channel);
         };
+        // eslint-disable-next-line react-hooks/exhaustive-deps
     }, []);
 
     useEffect(() => {
@@ -146,16 +147,17 @@ export default function DashboardPage() {
                 const sortedTrades = [...closed].sort((a, b) => new Date(a.created_at).getTime() - new Date(b.created_at).getTime());
                 generateEquityCurve(sortedTrades);
             }
-        } catch (error: any) {
+        } catch (error: unknown) {
+            const err = error as Record<string, unknown>;
             const errorMsg = `
 ╔═══════════════════════════════════════════════════════════════╗
 ║ ❌ Supabase 查询失败 ║
 ╚═══════════════════════════════════════════════════════════════╝
 错误详情:
-• message: ${error?.message || '未知错误'}
-• code: ${error?.code || '无代码'}
-• details: ${error?.details || '无详情'}
-• hint: ${error?.hint || '无提示'}
+• message: ${err?.message || '未知错误'}
+• code: ${err?.code || '无代码'}
+• details: ${err?.details || '无详情'}
+• hint: ${err?.hint || '无提示'}
 
 完整错误对象: ${JSON.stringify(error, null, 2)}
 
@@ -503,10 +505,10 @@ export default function DashboardPage() {
                     <div className="col-span-1 animate-fade-in-up" style={{ animationDelay: '0.1s' }}>
                         <StatCard
                             label="净资产"
-                            value={`$${(status?.account?.equity ?? 0).toFixed(2)}`}
+                            value={`$${(status?.last_mt5_update?.account?.equity ?? 0).toFixed(2)}`}
                             trend={stats.totalPnL > 0 ? 8.0 : -5.0}
                             icon={<DollarSign size={24} />}
-                            subValue={`余额: $${(status?.account?.balance ?? 0).toFixed(2)}`}
+                            subValue={`余额: $${(status?.last_mt5_update?.account?.balance ?? 0).toFixed(2)}`}
                         />
                     </div>
                     <div className="col-span-1 animate-fade-in-up" style={{ animationDelay: '0.15s' }}>
@@ -522,7 +524,7 @@ export default function DashboardPage() {
                         <StatCard
                             label="最大回撤"
                             value={`${(stats.maxDrawdown ?? 0).toFixed(1)}%`}
-                            trend={-(stats.maxDrawdown ?? 0)}
+                            trend={Number((-(stats.maxDrawdown ?? 0)).toFixed(2))}
                             icon={<Activity size={24} />}
                             subValue="基于已平仓交易"
                         />

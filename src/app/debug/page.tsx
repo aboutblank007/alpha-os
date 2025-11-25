@@ -15,22 +15,31 @@ interface EnvStatus {
   };
 }
 
-export default function DebugPage() {
-  const [envStatus, setEnvStatus] = useState<EnvStatus | null>(null);
-  const [supabaseStatus, setSupabaseStatus] = useState<any>(null);
-  const [loading, setLoading] = useState(true);
+interface SupabaseStatus {
+  success: boolean;
+  message?: string;
+  error?: string;
+  details?: unknown;
+  database?: {
+    tradesCount: number;
+  };
+  possibleCauses?: string[];
+  recommendation?: string;
+}
 
-  useEffect(() => {
-    // 检查客户端环境变量
-    const clientEnv = {
+export default function DebugPage() {
+  const [envStatus, setEnvStatus] = useState<EnvStatus | null>(() => ({
+    client: {
       url: !!process.env.NEXT_PUBLIC_SUPABASE_URL,
       key: !!process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY,
       urlValue: process.env.NEXT_PUBLIC_SUPABASE_URL?.substring(0, 40),
       keyLength: process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY?.length,
-    };
+    }
+  }));
+  const [supabaseStatus, setSupabaseStatus] = useState<SupabaseStatus | null>(null);
+  const [loading, setLoading] = useState(true);
 
-    setEnvStatus({ client: clientEnv });
-
+  useEffect(() => {
     // 获取服务端环境变量状态
     fetch('/api/test-env')
       .then(r => r.json())
@@ -86,8 +95,8 @@ export default function DebugPage() {
                 {allGood ? '一切正常！' : '检测到问题'}
               </h2>
               <p className="text-slate-400">
-                {allGood 
-                  ? '所有配置都正确，可以正常使用。' 
+                {allGood
+                  ? '所有配置都正确，可以正常使用。'
                   : '请按照下方提示修复问题。'
                 }
               </p>
@@ -165,7 +174,7 @@ export default function DebugPage() {
                     {supabaseStatus.message || supabaseStatus.error}
                   </div>
                 </div>
-                {supabaseStatus.details && (
+                {!!supabaseStatus.details && (
                   <div className="mt-3 p-3 bg-black/20 rounded text-xs font-mono text-slate-300 overflow-auto">
                     <pre>{JSON.stringify(supabaseStatus.details, null, 2)}</pre>
                   </div>
@@ -232,7 +241,7 @@ export default function DebugPage() {
                   <div className="font-semibold">完全重启开发服务器</div>
                   <div className="text-sm text-slate-400 mt-1">
                     <code className="bg-white/10 px-2 py-1 rounded block mt-1">
-                      # 按 Ctrl+C 停止<br/>
+                      # 按 Ctrl+C 停止<br />
                       npm run dev
                     </code>
                   </div>

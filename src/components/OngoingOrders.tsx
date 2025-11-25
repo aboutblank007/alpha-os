@@ -1,35 +1,45 @@
 import { ArrowUpRight, ArrowDownRight, Clock, WifiOff, Zap, XCircle } from 'lucide-react';
-import { useEffect, useState, useCallback } from 'react';
+import { useEffect, useState } from 'react';
 import { useBridgeStatus } from '@/hooks/useBridgeStatus';
 
 export function OngoingOrders() {
-    // 存储实时价格数据 { symbol: price }
-    const [marketData, setMarketData] = useState<Record<string, number>>({});
-    
     // 使用统一的 Bridge Status Hook
     const { isConnected: isBridgeConnected, status: bridgeStatus } = useBridgeStatus(1000);
-    
-    const [lastUpdate, setLastUpdate] = useState<Date>(new Date());
-    const [positions, setPositions] = useState<any[]>([]);
+
+    interface Position {
+        ticket: number;
+        symbol: string;
+        type: 'BUY' | 'SELL';
+        volume: number;
+        open_price: number;
+        current_price: number;
+        sl: number;
+        tp: number;
+        pnl: number;
+        swap: number;
+    }
+
+    const [positions, setPositions] = useState<Position[]>([]);
     const [executingTicket, setExecutingTicket] = useState<number | null>(null);
 
     // 同步 Bridge 仓位数据
     useEffect(() => {
         const bridgePositions = bridgeStatus?.last_mt5_update?.positions;
-        
+
         if (bridgePositions && Array.isArray(bridgePositions)) {
-            setPositions(bridgePositions);
-            setLastUpdate(new Date());
+            // Map MT5Position to component Position interface if needed, or just cast if compatible
+            // The component Position interface likely needs to match MT5Position
+            setPositions(bridgePositions as unknown as Position[]);
         } else if (!isBridgeConnected) {
             setPositions([]);
         }
     }, [bridgeStatus, isBridgeConnected]);
 
     // 平仓函数
-    const handleClose = async (pos: any) => {
+    const handleClose = async (pos: Position) => {
         if (executingTicket) return;
         if (!confirm(`确认平仓 #${pos.ticket} (${pos.symbol})?`)) return;
-        
+
         setExecutingTicket(pos.ticket);
         try {
             const res = await fetch('/api/bridge/execute', {
@@ -42,17 +52,17 @@ export function OngoingOrders() {
                     volume: pos.volume
                 })
             });
-            
+
             // We should assume success if we get a response, even if not 200, because EA might process it.
             // But ideally we check response.
             if (!res.ok) {
                 const data = await res.json();
                 throw new Error(data.error || 'Failed to close position');
             }
-            
+
             // 乐观更新：虽然下次轮询会更新，但我们可以先从列表移除
             // setPositions(prev => prev.filter(p => p.ticket !== ticket));
-            
+
         } catch (e) {
             alert('平仓失败: ' + (e instanceof Error ? e.message : '未知错误'));
         } finally {
@@ -75,7 +85,7 @@ export function OngoingOrders() {
                             <WifiOff size={14} className="text-slate-600" />
                         )}
                         <span className="text-xs text-slate-400">
-                             {isBridgeConnected ? '实时同步' : '连接断开'}
+                            {isBridgeConnected ? '实时同步' : '连接断开'}
                         </span>
                     </div>
                     <span className="text-xs font-medium px-2 py-1 rounded bg-white/5 text-slate-400">
@@ -102,7 +112,7 @@ export function OngoingOrders() {
                     <tbody className="divide-y divide-white/5">
                         {positions.map((pos) => {
                             const pnl = pos.pnl + pos.swap; // 总盈亏含隔夜利息
-                            
+
                             return (
                                 <tr
                                     key={pos.ticket}
@@ -143,7 +153,7 @@ export function OngoingOrders() {
                                         </div>
                                     </td>
                                     <td className="px-4 py-3 text-right">
-                                        <button 
+                                        <button
                                             onClick={() => handleClose(pos)}
                                             disabled={executingTicket === pos.ticket}
                                             className="p-1 hover:bg-white/10 rounded text-slate-400 hover:text-accent-danger transition-colors disabled:opacity-50"

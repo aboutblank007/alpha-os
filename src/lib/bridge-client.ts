@@ -8,7 +8,7 @@ export interface TradeRequest {
 
 export interface BridgeResponse {
     status: string;
-    command?: any;
+    command?: unknown;
     detail?: string;
 }
 
@@ -45,7 +45,7 @@ export class BridgeClient {
         try {
             const response = await fetch(`${this.baseUrl}/health`);
             return response.ok;
-        } catch (error) {
+        } catch {
             return false;
         }
     }

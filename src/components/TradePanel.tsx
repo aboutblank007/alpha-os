@@ -4,7 +4,7 @@ import { useState, useEffect } from 'react';
 import { Modal } from '@/components/ui/Modal';
 import { Button } from '@/components/ui/Button';
 import { Input } from '@/components/ui/Input';
-import { ChevronDown, Maximize2, MoreHorizontal, X, Minus, Plus, AlertTriangle } from 'lucide-react';
+import { ChevronDown, Maximize2, MoreHorizontal, X, Minus, Plus } from 'lucide-react';
 import { useBridgeStatus } from '@/hooks/useBridgeStatus';
 import { cn } from '@/lib/utils';
 import { Checkbox } from '@/components/ui/Checkbox';
@@ -20,7 +20,7 @@ interface TradePanelProps {
 export function TradePanel({ open, onClose, symbol, initialSide = 'BUY' }: TradePanelProps) {
     const { status, isConnected } = useBridgeStatus(1000);
     const priceData = status?.symbol_prices?.[symbol];
-    
+
     const [units, setUnits] = useState(0.01);
     const [takeProfitEnabled, setTakeProfitEnabled] = useState(false);
     const [stopLossEnabled, setStopLossEnabled] = useState(false);
@@ -31,7 +31,8 @@ export function TradePanel({ open, onClose, symbol, initialSide = 'BUY' }: Trade
     const [isSubmitting, setIsSubmitting] = useState(false);
     const [side, setSide] = useState<'BUY' | 'SELL'>(initialSide);
     const [validUntil, setValidUntil] = useState("手动取消前有效");
-    
+    const [error, setError] = useState<string | null>(null);
+
     // Reset form when opened
     useEffect(() => {
         if (open) {
@@ -43,13 +44,15 @@ export function TradePanel({ open, onClose, symbol, initialSide = 'BUY' }: Trade
             setIsSubmitting(false);
             setTakeProfitEnabled(false);
             setStopLossEnabled(false);
+            setError(null); // Clear error on open
         }
     }, [open, initialSide, symbol]);
 
-    const bid = priceData?.bid || 0;
-    const ask = priceData?.ask || 0;
-    const spread = bid && ask ? ((ask - bid) * (symbol.includes('JPY') || symbol.includes('XAU') ? 100 : 10000)).toFixed(1) : '-';
-    
+    const price = priceData?.bid ?? 0; // Default to bid for generic price
+    const bid = priceData?.bid ?? 0;
+    const ask = priceData?.ask ?? 0;
+    const spread = (ask - bid).toFixed(5);
+
     // Calculate dynamic tick value
     // Standard lot (1.0) tick value is usually $1 for 1 point move in non-JPY pairs, but varies.
     // For XAUUSD, 1 lot, 0.01 move = $1? No, 1 lot = 100 oz. 0.01 move = $1.
@@ -60,11 +63,25 @@ export function TradePanel({ open, onClose, symbol, initialSide = 'BUY' }: Trade
     const tickValue = (units * 10).toFixed(2);
 
     const handleSubmit = async () => {
-        if (!isConnected) return;
+        if (!isConnected) {
+            setError('Bridge is not connected.');
+            return;
+        }
         setIsSubmitting(true);
-        
+        setError(null); // Clear previous errors
+
         try {
-            const payload: any = {
+            interface TradePayload {
+                action: 'BUY' | 'SELL';
+                symbol: string;
+                volume: number;
+                sl: number;
+                tp: number;
+                type?: string;
+                price?: number;
+            }
+
+            const payload: TradePayload = {
                 action: side,
                 symbol: symbol.replace('/', '').replace('_', ''),
                 volume: units,
@@ -88,19 +105,20 @@ export function TradePanel({ open, onClose, symbol, initialSide = 'BUY' }: Trade
 
             const data = await res.json();
             if (!res.ok || data.error) throw new Error(data.error || 'Trade failed');
-            
+
             onClose();
-        } catch (e) {
-            alert(`下单失败: ${e instanceof Error ? e.message : '未知错误'}`);
+        } catch (err: unknown) {
+            const errorMessage = err instanceof Error ? err.message : String(err);
+            setError(`下单失败: ${errorMessage}`);
         } finally {
             setIsSubmitting(false);
         }
     };
 
     return (
-        <Modal 
-            open={open} 
-            onOpenChange={(o) => !o && onClose()} 
+        <Modal
+            open={open}
+            onOpenChange={(o) => !o && onClose()}
             title=""
             className="w-full max-w-[420px] p-0 overflow-hidden bg-white text-slate-900 mx-auto self-center my-4 shadow-2xl"
             hideCloseButton
@@ -163,13 +181,13 @@ export function TradePanel({ open, onClose, symbol, initialSide = 'BUY' }: Trade
                         {['market', 'limit', 'stop'].map((tab) => (
                             <button
                                 key={tab}
-                                onClick={() => setActiveTab(tab as any)}
+                                onClick={() => setActiveTab(tab as 'market' | 'limit' | 'stop')}
                                 className={cn(
                                     "flex-1 pb-2 text-xs font-medium border-b-2 transition-colors capitalize",
                                     activeTab === tab ? "border-blue-500 text-blue-600" : "border-transparent text-slate-400 hover:text-slate-600"
                                 )}
                             >
-                                {{'market': '市价', 'limit': '限价', 'stop': '止损'}[tab]}
+                                {{ 'market': '市价', 'limit': '限价', 'stop': '止损' }[tab]}
                             </button>
                         ))}
                     </div>
@@ -323,6 +341,13 @@ export function TradePanel({ open, onClose, symbol, initialSide = 'BUY' }: Trade
                                 </span>
                             </div>
                         </div>
+
+                        {/* Error Message */}
+                        {error && (
+                            <div className="px-3 py-2 text-xs text-red-500 bg-red-50 border border-red-100 rounded-md mb-2">
+                                {error}
+                            </div>
+                        )}
 
                         {/* Order Button */}
                         <div className="pt-1">

@@ -105,16 +105,7 @@ function calculateATR(high: number[], low: number[], close: number[], period: nu
         atrArray.push(atr);
     }
 
-    // Fill beginning with NaNs to match data length
-    const result = new Array(high.length).fill(NaN);
-    for (let i = 0; i < atrArray.length; i++) {
-        // The atrArray calculated above aligns such that atrArray[period-1] corresponds to data[period-1]
-        // But we pushed NaNs to atrArray to align indices? No, let's simplify.
-        // Let's just map back.
-        // The loop above starts pushing at index `period-1`.
-        // So result[i] should be valid from i = period-1.
-        // Actually, standard RMA/ATR usually needs more data to stabilize, but this is the formula.
-    }
+
 
     // Re-implementation for simpler array mapping
     const finalAtr = new Array(high.length).fill(NaN);

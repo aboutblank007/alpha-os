@@ -35,22 +35,23 @@ export default function AnalyticsPage() {
     const [maeMfeData, setMaeMfeData] = useState<{ ticket: string; mae: number; mfe: number; pnl: number }[]>([]);
 
     useEffect(() => {
-        fetchData();
-    }, []);
-
-    const fetchData = async () => {
-        try {
-            const res = await fetch('/api/trades?status=closed');
-            const { data } = await res.json();
-            if (data) {
-                processData(data);
+        const fetchData = async () => {
+            try {
+                const res = await fetch('/api/trades?status=closed');
+                const { data } = await res.json();
+                if (data) {
+                    processData(data);
+                }
+            } catch (error) {
+                console.error('Error fetching trades:', error);
+            } finally {
+                setLoading(false);
             }
-        } catch (error) {
-            console.error('Error fetching trades:', error);
-        } finally {
-            setLoading(false);
-        }
-    };
+        };
+
+        fetchData();
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, []);
 
     const processData = (rawTrades: Trade[]) => {
         setTrades(rawTrades);
@@ -92,27 +93,27 @@ export default function AnalyticsPage() {
 
         // 3. Process Drawdown Data
         let peak = 0;
-        let equity = 0; // Starting from 0 relative change, or could fetch initial balance
+        const balance = 10000; // Initial Balance // Starting from 0 relative change, or could fetch initial balance
         // If we want % drawdown, we usually need a base balance. 
         // Let's assume a starting balance of 10000 for calculation if not available, 
         // OR just calculate absolute drawdown from peak PnL accumulation.
         // Standard definition: Drawdown % = (Peak Equity - Current Equity) / Peak Equity
-        
+
         let currentEquity = 10000; // Base balance assumption for % calc
         peak = currentEquity;
 
         const ddData = rawTrades.map(t => {
             currentEquity += t.pnl_net;
             if (currentEquity > peak) peak = currentEquity;
-            
+
             const dd = peak > 0 ? ((currentEquity - peak) / peak) * 100 : 0;
-            
+
             return {
                 date: new Date(t.entry_time).toLocaleDateString(),
                 drawdown: dd
             };
         });
-        
+
         // Add initial point
         if (ddData.length > 0) {
             ddData.unshift({ date: 'Start', drawdown: 0 });

@@ -48,13 +48,17 @@ export function DataGrid<T>({
 
   const sortedData = React.useMemo(() => {
     if (!sortConfig || !sortConfig.direction) return data;
-    
-    return [...data].sort((a, b) => {
-      const aValue = (a as any)[sortConfig.key];
-      const bValue = (b as any)[sortConfig.key];
 
-      if (aValue < bValue) return sortConfig.direction === "asc" ? -1 : 1;
-      if (aValue > bValue) return sortConfig.direction === "asc" ? 1 : -1;
+    return [...data].sort((a, b) => {
+      const valA = (a as Record<string, unknown>)[sortConfig.key as string];
+      const valB = (b as Record<string, unknown>)[sortConfig.key as string];
+
+      // Handle null/undefined values for comparison
+      if (valA === null || valA === undefined) return sortConfig.direction === "asc" ? -1 : 1;
+      if (valB === null || valB === undefined) return sortConfig.direction === "asc" ? 1 : -1;
+
+      if (valA < valB) return sortConfig.direction === "asc" ? -1 : 1;
+      if (valA > valB) return sortConfig.direction === "asc" ? 1 : -1;
       return 0;
     });
   }, [data, sortConfig]);
@@ -133,7 +137,7 @@ export function DataGrid<T>({
                         col.className
                       )}
                     >
-                      {col.render ? col.render(item) : (item as any)[col.key]}
+                      {col.render ? col.render(item) : String((item as Record<string, unknown>)[col.key as string] ?? '')}
                     </td>
                   ))}
                 </tr>

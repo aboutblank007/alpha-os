@@ -24,7 +24,7 @@ export async function GET() {
     }
 
     // 测试连接：尝试查询 trades 表
-    const { data, error, count } = await supabase
+    const { error, count } = await supabase
       .from('trades')
       .select('id', { count: 'exact', head: true });
 
@@ -67,12 +67,13 @@ export async function GET() {
       timestamp: new Date().toISOString(),
     });
 
-  } catch (error: any) {
+  } catch (error: unknown) {
     console.error('Debug API error:', error);
+    const errorMessage = error instanceof Error ? error.message : String(error);
     return NextResponse.json({
       success: false,
       error: '调试 API 错误',
-      message: error.message || String(error),
+      message: errorMessage,
     }, { status: 500 });
   }
 }

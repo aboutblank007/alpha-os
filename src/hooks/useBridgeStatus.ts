@@ -1,19 +1,34 @@
 import { useState, useEffect, useRef } from 'react';
 
+export interface MT5Account {
+    balance: number;
+    equity: number;
+    margin: number;
+    free_margin: number;
+}
+
+export interface MT5Position {
+    ticket: number;
+    symbol: string;
+    type: string;
+    volume: number;
+    price: number;
+    sl: number;
+    tp: number;
+    pnl: number;
+    comment?: string;
+}
+
 export interface BridgeStatus {
     bridge_status: 'connected' | 'disconnected';
-    last_mt5_update: any;
-    active_symbols: string[];
-    symbol_prices: Record<string, any>;
-    pending_commands: number;
-    last_trade: any;
-    positions?: any[];
-    account?: {
-        balance: number;
-        equity: number;
-        margin: number;
-        free_margin: number;
+    last_mt5_update: {
+        account: MT5Account;
+        positions: MT5Position[];
     };
+    active_symbols: string[];
+    symbol_prices: Record<string, { bid: number; ask: number; last_seen: number }>;
+    pending_commands: number;
+    last_trade: unknown;
 }
 
 export function useBridgeStatus(pollInterval = 1000) {

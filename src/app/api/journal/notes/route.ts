@@ -19,7 +19,7 @@ export async function GET(request: Request) {
       // 获取特定日期的笔记
       query = query.eq('date', date);
       const { data, error } = await query.single();
-      
+
       if (error) {
         if (error.code === 'PGRST116') {
           // 未找到记录
@@ -27,7 +27,7 @@ export async function GET(request: Request) {
         }
         throw error;
       }
-      
+
       return NextResponse.json({ note: data });
     } else if (startDate && endDate) {
       // 获取日期范围内的笔记
@@ -45,10 +45,11 @@ export async function GET(request: Request) {
     if (error) throw error;
 
     return NextResponse.json({ notes: data });
-  } catch (error: any) {
+  } catch (error: unknown) {
     console.error('获取笔记错误:', error);
+    const errorMessage = error instanceof Error ? error.message : String(error);
     return NextResponse.json(
-      { error: '获取笔记失败: ' + error.message },
+      { error: '获取笔记失败: ' + errorMessage },
       { status: 500 }
     );
   }
@@ -97,10 +98,11 @@ export async function POST(request: Request) {
     if (error) throw error;
 
     return NextResponse.json({ note: data });
-  } catch (error: any) {
+  } catch (error: unknown) {
     console.error('创建笔记错误:', error);
+    const errorMessage = error instanceof Error ? error.message : String(error);
     return NextResponse.json(
-      { error: '创建笔记失败: ' + error.message },
+      { error: '创建笔记失败: ' + errorMessage },
       { status: 500 }
     );
   }
@@ -133,10 +135,11 @@ export async function PUT(request: Request) {
     if (error) throw error;
 
     return NextResponse.json({ note: data });
-  } catch (error: any) {
+  } catch (error: unknown) {
     console.error('更新笔记错误:', error);
+    const errorMessage = error instanceof Error ? error.message : String(error);
     return NextResponse.json(
-      { error: '更新笔记失败: ' + error.message },
+      { error: '更新笔记失败: ' + errorMessage },
       { status: 500 }
     );
   }
@@ -160,10 +163,11 @@ export async function DELETE(request: Request) {
     if (error) throw error;
 
     return NextResponse.json({ success: true });
-  } catch (error: any) {
+  } catch (error: unknown) {
     console.error('删除笔记错误:', error);
+    const errorMessage = error instanceof Error ? error.message : String(error);
     return NextResponse.json(
-      { error: '删除笔记失败: ' + error.message },
+      { error: '删除笔记失败: ' + errorMessage },
       { status: 500 }
     );
   }

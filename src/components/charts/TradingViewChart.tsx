@@ -1,12 +1,12 @@
 "use client";
 
-import React, { useEffect, useRef, useState, useMemo } from 'react';
-import { createChart, IChartApi, ISeriesApi, CandlestickData, ColorType, LineStyle, Time, CandlestickSeries, LineSeries, SeriesMarker, SeriesMarkerPosition, SeriesMarkerShape, createSeriesMarkers } from 'lightweight-charts';
-import { calculatePivotTrendSignals, DEFAULT_SETTINGS, OHLC, IndicatorResult, TrendState } from '@/lib/indicators';
+import React, { useEffect, useRef, useState } from 'react';
+import { createChart, IChartApi, ISeriesApi, CandlestickData, ColorType, Time, CandlestickSeries, LineSeries, SeriesMarker, createSeriesMarkers, LineData } from 'lightweight-charts';
+import { calculatePivotTrendSignals, DEFAULT_SETTINGS, OHLC, TrendState } from '@/lib/indicators';
 import { Select } from '@/components/ui/Select';
 import { Button } from '@/components/ui/Button';
 import { Checkbox } from '@/components/ui/Checkbox';
-import { Loader2, Settings2, Wifi, WifiOff, TrendingUp, TrendingDown } from 'lucide-react';
+import { Settings2 } from 'lucide-react';
 
 interface TradingViewChartProps {
   initialSymbol?: string;
@@ -14,36 +14,9 @@ interface TradingViewChartProps {
   className?: string;
 }
 
-interface BridgeStatus {
-  bridge_status: 'connected' | 'disconnected';
-  last_mt5_update: {
-    symbol?: string;
-    bid?: number;
-    ask?: number;
-  };
-  pending_commands: number;
-  error?: string;
-}
-
 type Period = 'M1' | 'M5' | 'M15' | 'M30' | 'H1' | 'H4' | 'D';
 
-const PERIODS: { label: string; value: Period }[] = [
-  { label: '1分', value: 'M1' },
-  { label: '5分', value: 'M5' },
-  { label: '15分', value: 'M15' },
-  { label: '30分', value: 'M30' },
-  { label: '1时', value: 'H1' },
-  { label: '4时', value: 'H4' },
-  { label: '日线', value: 'D' },
-];
 
-const SYMBOLS = [
-  { label: 'EUR/USD', value: 'EUR_USD' },
-  { label: 'GBP/USD', value: 'GBP_USD' },
-  { label: 'USD/JPY', value: 'USD_JPY' },
-  { label: 'XAU/USD (黄金)', value: 'XAU_USD' },
-  { label: 'BTC/USD', value: 'BTC_USD' },
-];
 
 import { useBridgeStatus } from '@/hooks/useBridgeStatus';
 
@@ -61,45 +34,17 @@ export function TradingViewChart({ initialSymbol = 'EUR_USD', height = 500, clas
   const [chartData, setChartData] = useState<CandlestickData[]>([]);
 
   const [indicators, setIndicators] = useState({
-    pivotTrend: false, 
+    pivotTrend: false,
   });
   const [trendState, setTrendState] = useState<TrendState | null>(null);
   const [showSettings, setShowSettings] = useState(false);
 
   // Use Bridge Hook
-  const { status: bridgeStatus, isConnected, activeSymbols } = useBridgeStatus();
-  const [executing, setExecuting] = useState<string | null>(null);
+  // Use Bridge Hook
+  const { activeSymbols } = useBridgeStatus();
 
   // Trade syncing is now handled by the backend (trading-bridge/src/main.py)
   // The backend automatically syncs trades to Supabase when they are reported from MT5
-
-  const handleTrade = async (action: 'BUY' | 'SELL') => {
-    if (executing) return;
-    setExecuting(action);
-    try {
-      const res = await fetch('/api/bridge/execute', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          action,
-          symbol: symbol.replace('_', ''), // EUR_USD -> EURUSD
-          volume: 0.01 // Fixed volume for MVP
-        })
-      });
-
-      const data = await res.json();
-      if (!res.ok || data.error) {
-        throw new Error(data.error || 'Trade failed');
-      }
-
-      // Optional: Add toast notification here
-      console.log('Trade queued:', data);
-    } catch (e) {
-      alert(`Trade Execution Failed: ${e instanceof Error ? e.message : 'Unknown error'}`);
-    } finally {
-      setExecuting(null);
-    }
-  };
 
   // 初始化图表
   useEffect(() => {
@@ -182,33 +127,33 @@ export function TradingViewChart({ initialSymbol = 'EUR_USD', height = 500, clas
         const data = await response.json();
         if (data.candles) {
           const formattedData = data.candles
-            .map((c: any) => ({
+            .map((c: { time: number; open: number; high: number; low: number; close: number }) => ({
               time: c.time as Time,
               open: c.open,
               high: c.high,
               low: c.low,
               close: c.close,
             }))
-            .sort((a: any, b: any) => (a.time as number) - (b.time as number)); // Ensure ascending order
+            .sort((a: { time: number }, b: { time: number }) => (a.time) - (b.time)); // Ensure ascending order
 
           setChartData(formattedData);
           if (candleSeriesRef.current) {
             candleSeriesRef.current.setData(formattedData);
-            
+
             // 设置默认缩放级别和偏移
             const totalBars = formattedData.length;
             if (totalBars > 0) {
-               // 增加右侧空白（Right Offset）
-               // Lightweight Charts 的 rightOffset 并不是直接像素值，而是 K 线数量
-               // 为了把最后一根 K 线推到 2/3 处，我们需要设置较大的空白
-               // 假设当前视图宽度能容纳 ~60 根 K 线，我们需要约 20 根 K 线的空白
-               
-               const timeScale = chartRef.current?.timeScale();
-               if (timeScale) {
-                   timeScale.scrollToPosition(30, false); // 负数向左滚，正数向右留白？不，scrollToPosition 的 offset 是从右边缘算的 bar 数量
-                   // 正值 = 右侧留白数量
-                   // 20 根左右的留白通常能达到 2/3 效果（取决于缩放）
-               }
+              // 增加右侧空白（Right Offset）
+              // Lightweight Charts 的 rightOffset 并不是直接像素值，而是 K 线数量
+              // 为了把最后一根 K 线推到 2/3 处，我们需要设置较大的空白
+              // 假设当前视图宽度能容纳 ~60 根 K 线，我们需要约 20 根 K 线的空白
+
+              const timeScale = chartRef.current?.timeScale();
+              if (timeScale) {
+                timeScale.scrollToPosition(30, false); // 负数向左滚，正数向右留白？不，scrollToPosition 的 offset 是从右边缘算的 bar 数量
+                // 正值 = 右侧留白数量
+                // 20 根左右的留白通常能达到 2/3 效果（取决于缩放）
+              }
             }
           }
         }
@@ -265,7 +210,7 @@ export function TradingViewChart({ initialSymbol = 'EUR_USD', height = 500, clas
         lineWidth: 1,
         title: 'EMA Short',
       });
-      ema1Series.setData(result.ema1 as any);
+      ema1Series.setData(result.ema1 as LineData[]);
       indicatorSeriesRef.current.set('pt_ema1', ema1Series);
 
       // Plot EMA2 (Long)
@@ -274,7 +219,7 @@ export function TradingViewChart({ initialSymbol = 'EUR_USD', height = 500, clas
         lineWidth: 1,
         title: 'EMA Long',
       });
-      ema2Series.setData(result.ema2 as any);
+      ema2Series.setData(result.ema2 as LineData[]);
       indicatorSeriesRef.current.set('pt_ema2', ema2Series);
 
       // Plot Center Line
@@ -283,7 +228,7 @@ export function TradingViewChart({ initialSymbol = 'EUR_USD', height = 500, clas
         title: 'Center Line',
       });
       // Use dynamic color from data
-      centerSeries.setData(result.centerLine as any);
+      centerSeries.setData(result.centerLine as LineData[]);
       indicatorSeriesRef.current.set('pt_center', centerSeries);
 
       // Add Markers to CandleSeries
@@ -437,64 +382,4 @@ export function TradingViewChart({ initialSymbol = 'EUR_USD', height = 500, clas
 
 // --- Helper Functions ---
 
-function calculateSMA(data: CandlestickData[], period: number) {
-  const result = [];
-  for (let i = 0; i < data.length; i++) {
-    if (i < period - 1) continue;
-    let sum = 0;
-    for (let j = 0; j < period; j++) {
-      sum += data[i - j].close;
-    }
-    result.push({
-      time: data[i].time,
-      value: sum / period,
-    });
-  }
-  return result;
-}
 
-function calculateEMA(data: CandlestickData[], period: number) {
-  const result = [];
-  const k = 2 / (period + 1);
-  let ema = data[0].close;
-
-  // Initialize EMA with SMA of first 'period' elements roughly or just start from 0?
-  // Standard EMA usually starts with SMA of first N periods. 
-  // For simplicity, we start EMA from the first close price, but it stabilizes after some periods.
-
-  for (let i = 0; i < data.length; i++) {
-    ema = (data[i].close - ema) * k + ema;
-    if (i >= period - 1) {
-      result.push({ time: data[i].time, value: ema });
-    }
-  }
-  return result;
-}
-
-function calculateBollingerBands(data: CandlestickData[], period: number, multiplier: number) {
-  const upper = [];
-  const lower = [];
-
-  for (let i = 0; i < data.length; i++) {
-    if (i < period - 1) continue;
-
-    // Calculate SMA
-    let sum = 0;
-    for (let j = 0; j < period; j++) {
-      sum += data[i - j].close;
-    }
-    const sma = sum / period;
-
-    // Calculate StdDev
-    let sumSqDiff = 0;
-    for (let j = 0; j < period; j++) {
-      sumSqDiff += Math.pow(data[i - j].close - sma, 2);
-    }
-    const stdDev = Math.sqrt(sumSqDiff / period);
-
-    upper.push({ time: data[i].time, value: sma + multiplier * stdDev });
-    lower.push({ time: data[i].time, value: sma - multiplier * stdDev });
-  }
-
-  return { upper, lower };
-}

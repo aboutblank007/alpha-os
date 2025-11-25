@@ -22,8 +22,9 @@ export default function TradeControl() {
         try {
             const result = await bridgeClient.executeTrade(trade);
             setStatus(`Success: ${JSON.stringify(result)}`);
-        } catch (error: any) {
-            setStatus(`Error: ${error.message}`);
+        } catch (error: unknown) {
+            const errorMessage = error instanceof Error ? error.message : String(error);
+            setStatus(`Error: ${errorMessage}`);
         } finally {
             setLoading(false);
         }

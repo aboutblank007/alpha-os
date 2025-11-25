@@ -50,7 +50,13 @@ export async function GET(request: Request) {
       if (error) throw error;
 
       // 按日期分组统计
-      const dailyMap = new Map<string, any>();
+      interface DailyStats {
+        date: string;
+        total_trades: number;
+        winning_trades: number;
+        total_pnl: number;
+      }
+      const dailyMap = new Map<string, DailyStats>();
 
       trades?.forEach((trade) => {
         const tradeDate = trade.created_at.split('T')[0];
@@ -65,7 +71,7 @@ export async function GET(request: Request) {
           });
         }
 
-        const stats = dailyMap.get(tradeDate);
+        const stats = dailyMap.get(tradeDate)!;
         stats.total_trades += 1;
         if (pnl > 0) stats.winning_trades += 1;
         stats.total_pnl += pnl;
@@ -75,7 +81,7 @@ export async function GET(request: Request) {
       const stats = Array.from(dailyMap.values()).map((stat) => ({
         ...stat,
         total_pnl: parseFloat(stat.total_pnl.toFixed(2)),
-        win_rate: stat.total_trades > 0 
+        win_rate: stat.total_trades > 0
           ? parseFloat(((stat.winning_trades / stat.total_trades) * 100).toFixed(1))
           : 0,
       }));
@@ -87,10 +93,11 @@ export async function GET(request: Request) {
         { status: 400 }
       );
     }
-  } catch (error: any) {
+  } catch (error: unknown) {
     console.error('获取交易统计错误:', error);
+    const errorMessage = error instanceof Error ? error.message : String(error);
     return NextResponse.json(
-      { error: '获取交易统计失败: ' + error.message },
+      { error: '获取交易统计失败: ' + errorMessage },
       { status: 500 }
     );
   }
