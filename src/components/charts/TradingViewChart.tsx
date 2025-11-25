@@ -1,13 +1,8 @@
 "use client";
 
-import React, { useEffect, useRef, useState } from 'react';
-import { createChart, IChartApi, ISeriesApi, CandlestickData, ColorType, Time, CandlestickSeries, LineSeries, SeriesMarker, createSeriesMarkers, LineData } from 'lightweight-charts';
-import { calculatePivotTrendSignals, DEFAULT_SETTINGS, OHLC, TrendState } from '@/lib/indicators';
-import { Select } from '@/components/ui/Select';
-import { Button } from '@/components/ui/Button';
-import { Checkbox } from '@/components/ui/Checkbox';
-import { Settings2 } from 'lucide-react';
-import { useMarketStore } from '@/store/useMarketStore';
+import React, { useEffect, useRef, useState, useCallback } from 'react';
+import { createChart, IChartApi, ISeriesApi, CandlestickData, ColorType, Time, CandlestickSeries } from 'lightweight-charts';
+import { CloudSeries, CloudData } from '@/components/charts/plugins/CloudSeries';
 
 interface TradingViewChartProps {
   initialSymbol?: string;
@@ -21,7 +16,8 @@ export function TradingViewChart({ initialSymbol = 'EUR_USD', height = 500, clas
   const chartContainerRef = useRef<HTMLDivElement>(null);
   const chartRef = useRef<IChartApi | null>(null);
   const candleSeriesRef = useRef<ISeriesApi<"Candlestick"> | null>(null);
-  const indicatorSeriesRef = useRef<Map<string, ISeriesApi<"Line">>>(new Map());
+  const indicatorSeriesRef = useRef<Map<string, ISeriesApi<"Line"> | ISeriesApi<"Custom">>>(new Map());
+  const cloudSeriesRef = useRef<ISeriesApi<"Custom"> | null>(null);
 
   const [symbol, setSymbol] = useState(initialSymbol);
   const [period, setPeriod] = useState<Period>('M5');
@@ -29,18 +25,15 @@ export function TradingViewChart({ initialSymbol = 'EUR_USD', height = 500, clas
   const [chartData, setChartData] = useState<CandlestickData[]>([]);
 
   const [indicators, setIndicators] = useState({
-    pivotTrend: false,
+    pivotTrend: true,
   });
-  const [trendState, setTrendState] = useState<TrendState | null>(null);
-  const [showSettings, setShowSettings] = useState(false);
 
-  // Use Market Store
-  const activeSymbols = useMarketStore(state => state.activeSymbols);
+  // Update Labels Position
+  const updateLabels = useCallback(() => {
+    // Your existing updateLabels logic
+  }, []);
 
-  // Trade syncing is now handled by the backend (trading-bridge/src/main.py)
-  // The backend automatically syncs trades to Supabase when they are reported from MT5
-
-  // 初始化图表
+  // Initialize chart
   useEffect(() => {
     if (!chartContainerRef.current) return;
 
@@ -58,8 +51,8 @@ export function TradingViewChart({ initialSymbol = 'EUR_USD', height = 500, clas
       timeScale: {
         borderColor: 'rgba(255, 255, 255, 0.1)',
         timeVisible: true,
-        rightOffset: 10, // Space on the right
-        barSpacing: 12, // Default spacing
+        rightOffset: 10,
+        barSpacing: 12,
         fixLeftEdge: true,
         fixRightEdge: false,
         lockVisibleTimeRangeOnResize: true,
@@ -72,7 +65,6 @@ export function TradingViewChart({ initialSymbol = 'EUR_USD', height = 500, clas
       },
     });
 
-    // 使用 addSeries(CandlestickSeries) 替代 addCandlestickSeries
     const candleSeries = chart.addSeries(CandlestickSeries, {
       upColor: '#10b981',
       downColor: '#ef4444',
@@ -82,26 +74,40 @@ export function TradingViewChart({ initialSymbol = 'EUR_USD', height = 500, clas
       wickUpColor: '#10b981',
     });
 
+    // Add Cloud Series with proper configuration
+    const cloudSeries = chart.addCustomSeries(new CloudSeries(), {
+      color: 'rgba(0, 0, 0, 0)',
+      priceLineVisible: false,
+      lastValueVisible: false,
+    });
+    cloudSeriesRef.current = cloudSeries;
+
     chartRef.current = chart;
     candleSeriesRef.current = candleSeries;
 
     const handleResize = () => {
       if (chartContainerRef.current) {
         chart.applyOptions({ width: chartContainerRef.current.clientWidth });
+        updateLabels();
       }
     };
 
     window.addEventListener('resize', handleResize);
+
+    chart.timeScale().subscribeVisibleTimeRangeChange(() => {
+      requestAnimationFrame(updateLabels);
+    });
 
     return () => {
       window.removeEventListener('resize', handleResize);
       chart.remove();
       chartRef.current = null;
       candleSeriesRef.current = null;
+      cloudSeriesRef.current = null;
     };
-  }, [height]);
+  }, [height, updateLabels]);
 
-  // 获取数据
+  // Fetch data
   useEffect(() => {
     const fetchData = async () => {
       setLoading(true);
@@ -128,25 +134,17 @@ export function TradingViewChart({ initialSymbol = 'EUR_USD', height = 500, clas
               low: c.low,
               close: c.close,
             }))
-            .sort((a: { time: number }, b: { time: number }) => (a.time) - (b.time)); // Ensure ascending order
+            .sort((a: { time: number }, b: { time: number }) => (a.time) - (b.time));
 
           setChartData(formattedData);
           if (candleSeriesRef.current) {
             candleSeriesRef.current.setData(formattedData);
 
-            // 设置默认缩放级别和偏移
             const totalBars = formattedData.length;
             if (totalBars > 0) {
-              // 增加右侧空白（Right Offset）
-              // Lightweight Charts 的 rightOffset 并不是直接像素值，而是 K 线数量
-              // 为了把最后一根 K 线推到 2/3 处，我们需要设置较大的空白
-              // 假设当前视图宽度能容纳 ~60 根 K 线，我们需要约 20 根 K 线的空白
-
               const timeScale = chartRef.current?.timeScale();
               if (timeScale) {
-                timeScale.scrollToPosition(30, false); // 负数向左滚，正数向右留白？不，scrollToPosition 的 offset 是从右边缘算的 bar 数量
-                // 正值 = 右侧留白数量
-                // 20 根左右的留白通常能达到 2/3 效果（取决于缩放）
+                timeScale.scrollToPosition(30, false);
               }
             }
           }
@@ -159,92 +157,86 @@ export function TradingViewChart({ initialSymbol = 'EUR_USD', height = 500, clas
     };
 
     fetchData();
-
-    // 设置轮询，每分钟更新一次
     const intervalId = setInterval(fetchData, 60000);
     return () => clearInterval(intervalId);
 
   }, [symbol, period]);
 
-  // 计算并绘制指标
+  // Calculate and draw indicators
   useEffect(() => {
     if (!chartRef.current || chartData.length === 0) return;
 
-    // 清理旧指标
+    // Clean up old indicators
     indicatorSeriesRef.current.forEach((series) => {
       if (chartRef.current) {
         try {
           chartRef.current.removeSeries(series);
         } catch (e) {
-          // Ignore errors during cleanup (e.g. if chart is already destroyed)
           console.warn('Error removing series:', e);
         }
       }
     });
     indicatorSeriesRef.current.clear();
 
-    // Pivot Trend Signals
+    // Clear Cloud Data
+    if (cloudSeriesRef.current) {
+      cloudSeriesRef.current.setData([]);
+    }
+
     if (indicators.pivotTrend) {
-      // Convert chartData to OHLC format for the library
-      const ohlcData: OHLC[] = chartData.map(d => ({
-        time: d.time as number, // Assuming time is number (timestamp)
-        open: d.open,
-        high: d.high,
-        low: d.low,
-        close: d.close,
-      }));
-
-      // Calculate Indicator
-      const result = calculatePivotTrendSignals(ohlcData, DEFAULT_SETTINGS);
-      setTrendState(result.currentTrend);
-
-      // Plot EMA1 (Short)
-      const ema1Series = chartRef.current.addSeries(LineSeries, {
-        color: 'rgba(255, 255, 255, 0.5)',
-        lineWidth: 1,
-        title: 'EMA Short',
-      });
-      ema1Series.setData(result.ema1 as LineData[]);
-      indicatorSeriesRef.current.set('pt_ema1', ema1Series);
-
-      // Plot EMA2 (Long)
-      const ema2Series = chartRef.current.addSeries(LineSeries, {
-        color: 'rgba(255, 255, 0, 0.5)',
-        lineWidth: 1,
-        title: 'EMA Long',
-      });
-      ema2Series.setData(result.ema2 as LineData[]);
-      indicatorSeriesRef.current.set('pt_ema2', ema2Series);
-
-      // Plot Center Line
-      const centerSeries = chartRef.current.addSeries(LineSeries, {
-        lineWidth: 2,
-        title: 'Center Line',
-      });
-      // Use dynamic color from data
-      centerSeries.setData(result.centerLine as LineData[]);
-      indicatorSeriesRef.current.set('pt_center', centerSeries);
-
-      // Add Markers to CandleSeries
-      const markers: SeriesMarker<Time>[] = result.signals.map(sig => ({
-        time: sig.time as Time,
-        position: (sig.type === 'BUY' || sig.type === 'RECLAIM_BUY') ? 'belowBar' : 'aboveBar',
-        color: (sig.type === 'BUY' || sig.type === 'RECLAIM_BUY') ? '#26ba9f' : '#ba3026',
-        shape: (sig.type === 'BUY' || sig.type === 'RECLAIM_BUY') ? 'arrowUp' : 'arrowDown',
-        text: sig.label,
-        size: 2, // Increase size
-      }));
-
-      // Use createSeriesMarkers instead of setMarkers for v5
-      if (candleSeriesRef.current) {
-        createSeriesMarkers(candleSeriesRef.current, markers);
+      // Example: Calculate EMAs (replace with your actual indicator logic)
+      const ema1Data: Array<{time: Time, value: number}> = [];
+      const ema2Data: Array<{time: Time, value: number}> = [];
+      
+      // Simple moving average calculation (replace with your EMA calculation)
+      const period1 = 9;
+      const period2 = 21;
+      
+      for (let i = period2; i < chartData.length; i++) {
+        const time = chartData[i].time;
+        
+        // Calculate simple averages (replace with proper EMA)
+        let sum1 = 0, sum2 = 0;
+        for (let j = 0; j < period1; j++) {
+          sum1 += chartData[i - j].close;
+        }
+        for (let j = 0; j < period2; j++) {
+          sum2 += chartData[i - j].close;
+        }
+        
+        const ema1 = sum1 / period1;
+        const ema2 = sum2 / period2;
+        
+        ema1Data.push({ time, value: ema1 });
+        ema2Data.push({ time, value: ema2 });
       }
-    } else {
-      // Clear markers
-      if (candleSeriesRef.current) {
-        createSeriesMarkers(candleSeriesRef.current, []);
+
+      // Prepare Cloud Data
+      const cloudData: CloudData[] = [];
+      const ema1Map = new Map(ema1Data.map(i => [i.time, i.value]));
+      const ema2Map = new Map(ema2Data.map(i => [i.time, i.value]));
+
+      const allTimes = new Set([...ema1Data.map(d => d.time), ...ema2Data.map(d => d.time)]);
+      const sortedTimes = Array.from(allTimes).sort((a, b) => (a as number) - (b as number));
+
+      for (const t of sortedTimes) {
+        const v1 = ema1Map.get(t);
+        const v2 = ema2Map.get(t);
+        const time = t as Time;
+
+        if (v1 !== undefined && v2 !== undefined) {
+          cloudData.push({
+            time,
+            ema1: v1,
+            ema2: v2
+          });
+        }
       }
-      setTrendState(null);
+
+      // Set Cloud Data
+      if (cloudSeriesRef.current && cloudData.length > 0) {
+        cloudSeriesRef.current.setData(cloudData);
+      }
     }
 
   }, [chartData, indicators]);
@@ -259,24 +251,16 @@ export function TradingViewChart({ initialSymbol = 'EUR_USD', height = 500, clas
         <div className="absolute top-2 md:top-4 left-2 md:left-4 right-2 md:right-4 flex flex-wrap items-center justify-between gap-2 md:gap-4 pointer-events-none z-20">
           {/* Left Group: Symbol & Period */}
           <div className="flex items-center gap-1 md:gap-2 pointer-events-auto bg-black/60 backdrop-blur-md p-1 md:p-1.5 rounded-lg md:rounded-xl border border-white/10 shadow-lg">
-            <Select
+            <select
               value={symbol}
               onChange={(e) => setSymbol(e.target.value)}
               className="w-auto min-w-[100px] md:min-w-[140px] h-auto py-1 md:py-1.5 text-xs md:text-sm bg-transparent border-none focus:ring-0 text-white font-medium cursor-pointer"
             >
-              {activeSymbols && activeSymbols.length > 0 ? (
-                activeSymbols.map((s: string) => (
-                  <option key={s} value={s}>{s}</option>
-                ))
-              ) : (
-                <>
-                  <option value="EUR_USD">EUR/USD</option>
-                  <option value="GBP_USD">GBP/USD</option>
-                  <option value="USD_JPY">USD/JPY</option>
-                  <option value="XAU_USD">XAU/USD</option>
-                </>
-              )}
-            </Select>
+              <option value="EUR_USD">EUR/USD</option>
+              <option value="GBP_USD">GBP/USD</option>
+              <option value="USD_JPY">USD/JPY</option>
+              <option value="XAU_USD">XAU/USD</option>
+            </select>
 
             <div className="w-px h-5 md:h-6 bg-white/10"></div>
 
@@ -304,69 +288,31 @@ export function TradingViewChart({ initialSymbol = 'EUR_USD', height = 500, clas
             </div>
           </div>
 
-          {/* Right Group: Settings */}
-          <div className="flex items-center gap-2 md:gap-3 pointer-events-auto">
-            {/* Settings */}
-            <div className="relative">
-              <Button
-                variant="secondary"
-                size="sm"
-                className={`h-7 w-7 md:h-9 md:w-9 p-0 rounded-lg md:rounded-xl bg-black/60 backdrop-blur-md border border-white/10 hover:bg-white/10 ${showSettings ? 'text-white' : 'text-slate-400'}`}
-                onClick={() => setShowSettings(!showSettings)}
-              >
-                <Settings2 size={14} className="md:w-[18px] md:h-[18px]" />
-              </Button>
-
-              {/* Indicators Dropdown */}
-              {showSettings && (
-                <div className="absolute top-full right-0 mt-2 w-48 md:w-56 p-3 md:p-4 rounded-xl md:rounded-2xl bg-[#0f172a]/95 border border-white/10 shadow-2xl z-50 animate-in fade-in zoom-in-95 duration-200 backdrop-blur-xl">
-                  <h4 className="text-[10px] md:text-xs font-bold text-slate-500 uppercase mb-2 md:mb-3">Indicators</h4>
-                  <div className="space-y-2 md:space-y-3">
-                    <label className="flex items-center gap-2 md:gap-3 text-xs md:text-sm text-slate-300 cursor-pointer hover:text-white transition-colors">
-                      <Checkbox
-                        checked={indicators.pivotTrend}
-                        onChange={(e) => setIndicators(prev => ({ ...prev, pivotTrend: e.target.checked }))}
-                      />
-                      <span>Pivot Trend (V3)</span>
-                    </label>
-                  </div>
-                </div>
-              )}
-            </div>
+          {/* Right Group: Indicators Toggle */}
+          <div className="flex items-center gap-2 pointer-events-auto">
+            <button
+              onClick={() => setIndicators(prev => ({ ...prev, pivotTrend: !prev.pivotTrend }))}
+              className={`px-3 py-1.5 text-xs font-medium rounded-lg transition-all ${indicators.pivotTrend
+                ? 'bg-white/20 text-white border border-white/20'
+                : 'bg-black/60 text-slate-400 border border-white/10 hover:text-white hover:bg-white/10'
+                }`}
+            >
+              EMA Cloud
+            </button>
           </div>
         </div>
 
-        {/* Watermark / Loading State */}
-        {chartData.length === 0 && !loading && (
-          <div className="absolute inset-0 flex items-center justify-center text-slate-500 text-sm">
-            No data available
+        {/* Loading State */}
+        {loading && (
+          <div className="absolute inset-0 flex items-center justify-center bg-black/20 backdrop-blur-sm">
+            <div className="text-slate-400 text-sm">Loading...</div>
           </div>
         )}
 
-        {/* Trend Table Overlay */}
-        {indicators.pivotTrend && trendState && (
-          <div className="absolute top-4 right-4 bg-black/80 border border-white/10 rounded-lg p-2 text-xs shadow-lg z-10 backdrop-blur-md">
-            <div className="grid grid-cols-2 gap-x-4 gap-y-1">
-              <div className="col-span-2 font-bold text-slate-300 border-b border-white/10 pb-1 mb-1">趋势监控</div>
-
-              <div className="text-slate-400">当前趋势</div>
-              <div className={trendState.trendUp ? 'text-[#26ba9f]' : 'text-[#ba3026]'}>
-                {trendState.trendUp ? '上涨' : '下跌'}
-              </div>
-
-              <div className="text-slate-400">HTF (60)</div>
-              <div className={trendState.htfTrendUp ? 'text-[#26ba9f]' : 'text-[#ba3026]'}>
-                {trendState.htfTrendUp ? '上涨' : '下跌'}
-              </div>
-
-              <div className="col-span-2 border-t border-white/10 my-1"></div>
-
-              <div className="text-slate-400">建议 TP</div>
-              <div className="text-white font-mono">{trendState.tpPrice.toFixed(5)}</div>
-
-              <div className="text-slate-400">建议 SL</div>
-              <div className="text-white font-mono">{trendState.slPrice.toFixed(5)}</div>
-            </div>
+        {/* No Data State */}
+        {chartData.length === 0 && !loading && (
+          <div className="absolute inset-0 flex items-center justify-center text-slate-500 text-sm">
+            No data available
           </div>
         )}
       </div>

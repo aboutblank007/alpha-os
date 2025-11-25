@@ -77,7 +77,7 @@ export function SignalListener() {
         
         // Optionally mark signal as 'viewed' or 'processed' in DB
         if (latestSignal) {
-            supabase.table('signals').update({ status: 'processed' }).eq('id', latestSignal.id).then(() => {});
+            supabase.from('signals').update({ status: 'processed' }).eq('id', latestSignal.id).then(() => {});
         }
     };
 

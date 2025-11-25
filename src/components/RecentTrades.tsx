@@ -88,8 +88,7 @@ export function RecentTrades({ trades: propTrades }: RecentTradesProps) {
                         className="custom-scrollbar"
                         components={{
                             Table: (props) => <table {...props} className="w-full text-left text-sm border-collapse" />,
-                            TableRow: (props) => <tr {...props} className="group hover:bg-white/[0.02] transition-colors border-b border-surface-border/50 last:border-0" />,
-                            Footer: () => loading ? <div className="p-4 text-center text-xs text-slate-500">加载中...</div> : null
+                            TableRow: (props) => <tr {...props} className="group hover:bg-white/[0.02] transition-colors border-b border-surface-border/50 last:border-0" />
                         }}
                         fixedHeaderContent={() => (
                             <tr className="text-xs uppercase text-slate-500 font-medium border-b border-surface-border bg-[#030712] z-10">
