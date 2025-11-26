@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useEffect } from 'react';
-import { createClient } from '@supabase/supabase-js'; // Use direct client or helper? The helper in lib is fine but need to import.
+// createClient unused
 // Actually, let's use the helper if possible, but page.tsx is client side, so createClientComponentClient is better if using auth, 
 // but we are using a simple global client in src/lib/supabase.ts for this project structure.
 import { supabase, Trade } from '@/lib/supabase';

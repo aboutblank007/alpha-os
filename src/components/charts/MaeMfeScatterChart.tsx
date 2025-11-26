@@ -9,6 +9,32 @@ interface MaeMfeScatterChartProps {
     height?: number;
 }
 
+// Custom Tooltip - Defined outside component to avoid recreation on render
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+const CustomTooltip = ({ active, payload }: any) => {
+    if (active && payload && payload.length) {
+        const d = payload[0].payload;
+        return (
+            <div className="bg-slate-900 border border-white/10 p-3 rounded-lg shadow-xl backdrop-blur-md">
+                <p className="text-slate-400 text-xs mb-1">ID: <span className="text-white font-mono">{d.ticket}</span></p>
+                <div className="grid grid-cols-2 gap-x-4 gap-y-1 text-sm">
+                    <span className="text-slate-400">MAE:</span>
+                    <span className="text-accent-danger font-mono">{d.mae.toFixed(2)}</span>
+                    
+                    <span className="text-slate-400">MFE:</span>
+                    <span className="text-accent-success font-mono">{d.mfe.toFixed(2)}</span>
+                    
+                    <span className="text-slate-400">PnL:</span>
+                    <span className={`font-mono font-bold ${d.win ? 'text-accent-success' : 'text-accent-danger'}`}>
+                        {d.pnl >= 0 ? '+' : ''}{d.pnl.toFixed(2)}
+                    </span>
+                </div>
+            </div>
+        );
+    }
+    return null;
+};
+
 export function MaeMfeScatterChart({ trades, height = 400 }: MaeMfeScatterChartProps) {
     const data = useMemo(() => {
         return trades
@@ -30,31 +56,6 @@ export function MaeMfeScatterChart({ trades, height = 400 }: MaeMfeScatterChartP
                 };
             });
     }, [trades]);
-
-    // Custom Tooltip
-    const CustomTooltip = ({ active, payload }: TooltipProps<number, string>) => {
-        if (active && payload && payload.length) {
-            const d = payload[0].payload;
-            return (
-                <div className="bg-slate-900 border border-white/10 p-3 rounded-lg shadow-xl backdrop-blur-md">
-                    <p className="text-slate-400 text-xs mb-1">ID: <span className="text-white font-mono">{d.ticket}</span></p>
-                    <div className="grid grid-cols-2 gap-x-4 gap-y-1 text-sm">
-                        <span className="text-slate-400">MAE:</span>
-                        <span className="text-accent-danger font-mono">{d.mae.toFixed(2)}</span>
-                        
-                        <span className="text-slate-400">MFE:</span>
-                        <span className="text-accent-success font-mono">{d.mfe.toFixed(2)}</span>
-                        
-                        <span className="text-slate-400">PnL:</span>
-                        <span className={`font-mono font-bold ${d.win ? 'text-accent-success' : 'text-accent-danger'}`}>
-                            {d.pnl >= 0 ? '+' : ''}{d.pnl.toFixed(2)}
-                        </span>
-                    </div>
-                </div>
-            );
-        }
-        return null;
-    };
 
     return (
         <div style={{ width: '100%', height }}>

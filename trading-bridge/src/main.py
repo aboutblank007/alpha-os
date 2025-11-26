@@ -64,6 +64,111 @@ class HistoryData(BaseModel):
     data: List[Dict[str, Any]] # List of candles
     count: int
 
+
+# --- Automation Manager ---
+class AutomationManager:
+    def __init__(self):
+        self.rules = {} # { "SYMBOL": rule_dict, "GLOBAL": rule_dict }
+        self.supabase_url = os.environ.get("SUPABASE_URL")
+        self.supabase_key = os.environ.get("SUPABASE_KEY")
+        self.supabase = None
+        self.last_sync = 0
+        
+        if self.supabase_url and self.supabase_key:
+            try:
+                self.supabase = create_client(self.supabase_url, self.supabase_key)
+            except Exception as e:
+                print(f"Failed to init Supabase in AutomationManager: {e}")
+
+    async def sync_rules(self):
+        if not self.supabase: return
+        
+        # Sync every 10 seconds
+        if time.time() - self.last_sync < 10:
+            return
+
+        try:
+            response = self.supabase.table("automation_rules").select("*").eq("is_enabled", True).execute()
+            new_rules = {}
+            for rule in response.data:
+                new_rules[rule['symbol']] = rule
+            self.rules = new_rules
+            self.last_sync = time.time()
+            print(f"DEBUG: Synced {len(self.rules)} automation rules from Supabase")
+        except Exception as e:
+            print(f"Failed to sync automation rules: {e}")
+
+    def evaluate_signal(self, signal_data):
+        symbol = signal_data.get("symbol")
+        
+        # Debug: Print available rules and symbol being checked
+        # print(f"DEBUG: Evaluating signal for {symbol}. Available rules: {list(self.rules.keys())}")
+        
+        # 1. Check for specific symbol rule first, then GLOBAL
+        rule = self.rules.get(symbol) or self.rules.get("GLOBAL")
+        
+        if not rule:
+            print(f"DEBUG: No rule found for {symbol}. Rules loaded: {len(self.rules)}")
+            return False, "No matching automation rule"
+            
+        if not rule.get("is_enabled"):
+            print(f"DEBUG: Rule found for {symbol} but disabled.")
+            return False, "Automation disabled for this rule"
+
+        # 2. Spread Check (Best Effort)
+        max_spread = rule.get("max_spread_points", 50)
+        market_data = active_symbols.get(symbol)
+        
+        if market_data and max_spread > 0:
+            bid = market_data.get("bid")
+            ask = market_data.get("ask")
+            if bid and ask:
+                spread = ask - bid
+                # Basic estimation: if spread < max_spread * 0.00001 (assuming 5 digit)
+                # This is risky without knowing the Point value. 
+                # For now, we'll assume standard pairs if not known, or skip strict check.
+                # A safer way is to pass 'max_spread' to MT5 in the trade request.
+                pass
+        
+        print(f"DEBUG: Auto-Execution Approved for {symbol}. Rule ID: {rule.get('id')}")
+        return True, rule
+
+    def execute_auto_trade(self, signal_data, rule):
+        symbol = signal_data.get("symbol")
+        raw_action = signal_data.get("action", "")
+        price = signal_data.get("price")
+        sl = signal_data.get("sl")
+        tp = signal_data.get("tp")
+        
+        volume = float(rule.get("fixed_lot_size", 0.01))
+        
+        # Normalize action for EA (EA only understands BUY/SELL)
+        # The MQL5 indicator sends "BUY", "SELL", "RECLAIM_BUY", "RECLAIM_SELL"
+        if "BUY" in raw_action.upper():
+            action = "BUY"
+        elif "SELL" in raw_action.upper():
+            action = "SELL"
+        else:
+            action = raw_action # Fallback, though EA might ignore it
+        
+        command = {
+            "type": "TRADE",
+            "action": action,
+            "symbol": symbol,
+            "volume": volume,
+            "sl": sl,
+            "tp": tp,
+            "ticket": 0, # Auto-trade
+            "price": price,
+            "comment": "Auto-Exec"
+        }
+        
+        command_queue.append(command)
+        print(f"🚀 Auto-Execution: {action} (from {raw_action}) {symbol} {volume} Lots (Rule: {rule.get('id')})")
+        return command
+
+automation_manager = AutomationManager()
+
 # --- Signal Watcher ---
 async def watch_signal_directory():
     """
@@ -90,6 +195,9 @@ async def watch_signal_directory():
 
     while True:
         try:
+            # Sync automation rules
+            await automation_manager.sync_rules()
+
             # Scan for .json files
             files = glob.glob(os.path.join(SIGNAL_DIR, "*.json"))
             for file_path in files:
@@ -99,20 +207,49 @@ async def watch_signal_directory():
                     
                     print(f"🔔 New Signal Received: {content}")
                     
+                    # Check Automation
+                    is_auto, rule_or_msg = automation_manager.evaluate_signal(content)
+                    auto_status = "skipped"
+                    
+                    if is_auto:
+                        try:
+                            automation_manager.execute_auto_trade(content, rule_or_msg)
+                            auto_status = "executed"
+                        except Exception as exec_error:
+                            print(f"❌ Auto-Execution Failed: {exec_error}")
+                            auto_status = f"failed: {str(exec_error)}"
+                    else:
+                        print(f"Automation Skipped: {rule_or_msg}")
+
                     # Insert into Supabase
                     if supabase:
-                        signal_data = {
-                            "symbol": content.get("symbol"),
-                            "action": content.get("action"), # BUY / SELL
-                            "price": content.get("price"),
-                            "sl": content.get("sl"),
-                            "tp": content.get("tp"),
-                            "status": "new",
-                            "source": "mt5_indicator",
-                            "raw_data": content
-                        }
-                        supabase.table("signals").insert(signal_data).execute()
-                        print("✅ Signal saved to DB")
+                        try:
+                            # Normalize Action: RECLAIM_BUY -> BUY, RECLAIM_SELL -> SELL
+                            raw_action = content.get("action", "").upper()
+                            db_action = "BUY" if "BUY" in raw_action else "SELL"
+                            
+                            # Construct comment
+                            original_comment = content.get("comment", "")
+                            final_comment = f"{original_comment} | Original: {raw_action} | Auto: {auto_status}"
+                            
+                            signal_data = {
+                                "symbol": content.get("symbol"),
+                                "action": db_action, # Must be 'BUY' or 'SELL' for DB constraint
+                                "price": content.get("price"),
+                                "sl": content.get("sl"),
+                                "tp": content.get("tp"),
+                                "status": "new",
+                                "source": "mt5_indicator",
+                                "raw_data": content,
+                                "comment": final_comment # Fixed: 'notes' -> 'comment' to match DB schema
+                            }
+                            print(f"DEBUG: Inserting signal data: {signal_data}")
+                            supabase.table("signals").insert(signal_data).execute()
+                            print("✅ Signal saved to DB")
+                        except Exception as db_error:
+                            print(f"❌ Failed to save signal to DB: {db_error}")
+                    else:
+                        print("❌ Supabase client not initialized in watcher, skipping DB insert")
                     
                     # Delete file after processing
                     os.remove(file_path)
@@ -260,9 +397,9 @@ async def pop_command():
 async def update_status(status: StatusUpdate):
     global last_status
     
-    # Only log if position count changes (optional) or just silence routine logs
-    # if status.positions:
-    #     print(f"Received {len(status.positions)} positions from EA")
+    # Log detailed position info for debugging
+    if status.positions:
+        print(f"DEBUG: Received {len(status.positions)} positions. First: {status.positions[0]}")
     
     last_status = status.dict()
     

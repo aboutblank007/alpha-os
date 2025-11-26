@@ -1,7 +1,7 @@
 "use client";
 
 import { Trade } from '@/lib/supabase';
-import { Tooltip } from '@/components/ui/Tooltip'; // Assuming we have one, or I'll use simple title
+// Tooltip removed as we use custom hover
 import { useMemo } from 'react';
 
 interface SentimentHeatmapProps {

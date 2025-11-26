@@ -20,6 +20,7 @@ interface SymbolRowProps {
     ask?: number;
     isConnected: boolean;
     onSelect: (symbol: string) => void;
+    compact?: boolean;
 }
 
 const renderPrice = (price: number | undefined, symbol: string) => {
@@ -52,7 +53,8 @@ export const SymbolRow = memo(function SymbolRow({
     bid,
     ask,
     isConnected,
-    onSelect
+    onSelect,
+    compact = false
 }: SymbolRowProps) {
     const [showTradePanel, setShowTradePanel] = useState(false);
     const [tradeSide, setTradeSide] = useState<'BUY' | 'SELL'>('BUY');
@@ -64,7 +66,10 @@ export const SymbolRow = memo(function SymbolRow({
     return (
         <>
             <div
-                className="flex items-center justify-between p-2 border-b border-surface-border hover:bg-white/5 transition-colors cursor-pointer group gap-2 relative w-full"
+                className={cn(
+                    "flex items-center justify-between border-b border-surface-border hover:bg-white/5 transition-colors cursor-pointer group gap-2 relative w-full",
+                    compact ? "p-1.5" : "p-2"
+                )}
                 onClick={() => onSelect(symbol)}
                 style={{ containerType: 'inline-size' }}
             >

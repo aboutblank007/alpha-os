@@ -298,7 +298,7 @@ void SendStatusUpdate()
          StringReplace(comment, "\\", "/");
          
          positions_json += StringFormat(
-            "{\"ticket\":%d,\"symbol\":\"%s\",\"type\":\"%s\",\"volume\":%.2f,\"open_price\":%.5f,\"current_price\":%.5f,\"pnl\":%.2f,\"swap\":%.2f,\"sl\":%.5f,\"tp\":%.5f,\"comment\":\"%s\"}",
+            "{\"ticket\":%I64u,\"symbol\":\"%s\",\"type\":\"%s\",\"volume\":%.2f,\"open_price\":%.5f,\"current_price\":%.5f,\"pnl\":%.2f,\"swap\":%.2f,\"sl\":%.5f,\"tp\":%.5f,\"comment\":\"%s\"}",
             ticket,
             symbol,
             (PositionGetInteger(POSITION_TYPE) == POSITION_TYPE_BUY ? "BUY" : "SELL"),

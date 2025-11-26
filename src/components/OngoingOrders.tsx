@@ -1,4 +1,4 @@
-import { Clock, WifiOff, Zap, XCircle } from 'lucide-react';
+import { Clock, WifiOff, Zap, XCircle, ArrowUpRight, ArrowDownRight } from 'lucide-react';
 import { useState } from 'react';
 import { useMarketStore } from '@/store/useMarketStore';
 import { useTradeStore, MT5Position } from '@/store/useTradeStore';
@@ -8,9 +8,8 @@ interface OngoingOrdersProps {
 }
 
 export function OngoingOrders({ compact = false }: OngoingOrdersProps) {
-    // Use Stores directly
-    const isBridgeConnected = useMarketStore(state => state.isConnected);
-    const positions = useTradeStore(state => state.positions);
+    const { isConnected: isBridgeConnected } = useMarketStore();
+    const { positions } = useTradeStore();
 
     const [executingTicket, setExecutingTicket] = useState<number | null>(null);
 
@@ -80,37 +79,57 @@ export function OngoingOrders({ compact = false }: OngoingOrdersProps) {
                 <table className="w-full text-left text-sm">
                     <thead>
                         <tr className="text-xs uppercase text-slate-500 font-medium border-b border-white/5">
-                            <th className="px-4 py-2 font-medium">品种</th>
-                            <th className="px-4 py-2 font-medium text-right">盈亏</th>
-                            <th className="px-4 py-2 font-medium text-right">操作</th>
+                            <th className="px-4 py-3 font-medium">Ticket</th>
+                            <th className="px-4 py-3 font-medium">品种</th>
+                            <th className="px-4 py-3 font-medium">方向</th>
+                            <th className="px-4 py-3 font-medium">手数</th>
+                            <th className="px-4 py-3 font-medium">开仓价</th>
+                            <th className="px-4 py-3 font-medium">现价</th>
+                            <th className="px-4 py-3 font-medium">SL / TP</th>
+                            <th className="px-4 py-3 font-medium text-right">盈亏</th>
+                            <th className="px-4 py-3 font-medium text-right">操作</th>
                         </tr>
                     </thead>
                     <tbody className="divide-y divide-white/5">
                         {positions.map((pos) => {
                             const pnl = pos.pnl + pos.swap; 
                             return (
-                                <tr key={pos.ticket} className="group hover:bg-white/[0.02]">
-                                    <td className="px-4 py-2.5">
-                                        <div className="flex flex-col">
-                                            <span className="font-medium text-slate-200">{pos.symbol}</span>
-                                            <div className="flex items-center gap-1 mt-0.5">
-                                                <span className={`text-[10px] font-bold px-1 rounded ${pos.type === 'BUY' ? 'bg-blue-500/20 text-blue-400' : 'bg-red-500/20 text-red-400'}`}>
-                                                    {pos.type}
+                                <tr key={pos.ticket} className="group hover:bg-white/[0.02] transition-colors">
+                                    <td className="px-4 py-3 text-slate-500 font-mono text-xs">
+                                        #{pos.ticket}
+                                    </td>
+                                    <td className="px-4 py-3 font-medium text-slate-200 group-hover:text-white transition-colors">
+                                        {pos.symbol}
+                                    </td>
+                                    <td className="px-4 py-3">
+                                        <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded text-[10px] font-medium uppercase tracking-wide ${pos.type === 'BUY' ? 'bg-accent-success/10 text-accent-success' : 'bg-accent-danger/10 text-accent-danger'}`}>
+                                            {pos.type === 'BUY' ? <ArrowUpRight size={10} /> : <ArrowDownRight size={10} />}
+                                            {pos.type === 'BUY' ? '买入' : '卖出'}
                                         </span>
-                                                <span className="text-[10px] text-slate-500">{pos.volume}</span>
-                                            </div>
-                                        </div>
                                     </td>
-                                    <td className="px-4 py-2.5 text-right">
-                                        <div className={`font-mono font-bold ${pnl >= 0 ? 'text-accent-success' : 'text-accent-danger'}`}>
+                                    <td className="px-4 py-3 text-slate-300 font-mono text-xs">{pos.volume}</td>
+                                    <td className="px-4 py-3 text-slate-400 font-mono text-xs">{pos.open_price}</td>
+                                    <td className="px-4 py-3 text-slate-400 font-mono text-xs">{pos.current_price}</td>
+                                    <td className="px-4 py-3 text-slate-500 font-mono text-xs">
+                                        <div>SL: <span className={pos.sl > 0 ? 'text-accent-danger' : ''}>{pos.sl > 0 ? pos.sl : '-'}</span></div>
+                                        <div>TP: <span className={pos.tp > 0 ? 'text-accent-success' : ''}>{pos.tp > 0 ? pos.tp : '-'}</span></div>
+                                    </td>
+                                    <td className="px-4 py-3 text-right">
+                                        <div className="flex flex-col items-end gap-0.5">
+                                            <span className={`text-xs font-mono font-bold ${pnl >= 0 ? 'text-accent-success' : 'text-accent-danger'}`}>
                                                 {pnl >= 0 ? '+' : ''}{pnl.toFixed(2)}
+                                            </span>
+                                            <span className="text-[10px] text-slate-600">
+                                                Swap: {pos.swap}
+                                            </span>
                                         </div>
                                     </td>
-                                    <td className="px-4 py-2.5 text-right">
+                                    <td className="px-4 py-3 text-right">
                                         <button
                                             onClick={() => handleClose(pos)}
                                             disabled={executingTicket === pos.ticket}
-                                            className="p-1.5 bg-white/5 hover:bg-red-500/20 rounded text-slate-400 hover:text-red-400 transition-colors"
+                                            className="p-1 hover:bg-white/10 rounded text-slate-400 hover:text-accent-danger transition-colors disabled:opacity-50"
+                                            title="平仓"
                                         >
                                             <XCircle size={16} />
                                         </button>
@@ -122,7 +141,7 @@ export function OngoingOrders({ compact = false }: OngoingOrdersProps) {
                 </table>
                 {positions.length === 0 && (
                     <div className="flex flex-col items-center justify-center h-24 text-slate-500 text-xs">
-                        暂无持仓
+                        {isBridgeConnected ? '暂无持仓' : '等待 MT5 连接...'}
                     </div>
                 )}
             </div>

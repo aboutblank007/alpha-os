@@ -1,8 +1,9 @@
 "use client";
 
 import { Card } from "@/components/Card";
-import { User, Bell, Palette, Database, Shield, Download } from "lucide-react";
+import { User, Bell, Palette, Database, Shield, Download, Bot } from "lucide-react";
 import { useState } from "react";
+import { AutomationRules } from "@/components/settings/AutomationRules";
 
 export default function SettingsPage() {
   const [activeTab, setActiveTab] = useState("profile");
@@ -32,6 +33,7 @@ export default function SettingsPage() {
   const tabs = [
     { id: "profile", label: "个人信息", icon: User },
     { id: "trading", label: "交易偏好", icon: Database },
+    { id: "automation", label: "自动化", icon: Bot },
     { id: "notifications", label: "通知设置", icon: Bell },
     { id: "appearance", label: "外观主题", icon: Palette },
     { id: "security", label: "安全隐私", icon: Shield },
@@ -212,6 +214,9 @@ export default function SettingsPage() {
               </div>
             </Card>
           )}
+
+          {/* 自动化设置 */}
+          {activeTab === "automation" && <AutomationRules />}
 
           {/* 通知设置 */}
           {activeTab === "notifications" && (
