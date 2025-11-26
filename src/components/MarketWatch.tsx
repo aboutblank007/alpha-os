@@ -9,9 +9,10 @@ interface MarketWatchProps {
     isConnected?: boolean;
     onTrade?: (symbol: string, side: 'BUY' | 'SELL') => Promise<void> | void;
     onSymbolSelect?: (symbol: string) => void;
+    variant?: 'default' | 'focus';
 }
 
-export function MarketWatch({ isConnected: propIsConnected, onSymbolSelect }: MarketWatchProps) {
+export function MarketWatch({ isConnected: propIsConnected, onSymbolSelect, variant = 'default' }: MarketWatchProps) {
     const bridgeConnected = useMarketStore(state => state.isConnected);
     const activeSymbols = useMarketStore(state => state.activeSymbols);
     const symbolPrices = useMarketStore(state => state.symbolPrices);
@@ -20,6 +21,36 @@ export function MarketWatch({ isConnected: propIsConnected, onSymbolSelect }: Ma
     // If propIsConnected is provided, we respect it (maybe for testing or manual override), 
     // otherwise default to store status.
     const isConnected = propIsConnected !== undefined ? (propIsConnected && bridgeConnected) : bridgeConnected;
+
+    if (variant === 'focus') {
+        return (
+            <div className="h-full flex flex-col bg-transparent">
+                {/* Simplified Header for Focus Mode */}
+                <div className="px-4 py-2 border-b border-white/5 flex justify-between items-center bg-white/5 backdrop-blur-sm">
+                    <span className="text-xs font-bold text-slate-400 uppercase tracking-wider">市场监控</span>
+                    <div className={`h-1.5 w-1.5 rounded-full ${isConnected ? 'bg-accent-success shadow-[0_0_8px_rgba(16,185,129,0.5)]' : 'bg-slate-600'}`} />
+                </div>
+                <div className="flex-1 overflow-y-auto custom-scrollbar p-0">
+                     {activeSymbols.map((symbol) => {
+                        const priceData = symbolPrices?.[symbol];
+                        const bid = priceData?.bid ?? 0;
+                        const ask = priceData?.ask ?? 0;
+                        return (
+                            <SymbolRow
+                                key={symbol}
+                                symbol={symbol}
+                                bid={bid}
+                                ask={ask}
+                                isConnected={!!isConnected}
+                                onSelect={onSymbolSelect || (() => { })}
+                                compact={true} // Pass compact prop if SymbolRow supports it, otherwise it just renders normally
+                            />
+                        );
+                    })}
+                </div>
+            </div>
+        );
+    }
 
     return (
         <div className="glass-panel p-0 rounded-xl h-full flex flex-col overflow-hidden bg-[#1e222d]">

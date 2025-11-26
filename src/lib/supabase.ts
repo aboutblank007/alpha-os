@@ -20,6 +20,8 @@ export interface Trade {
   notes?: string
   emotion_score?: number
   strategies?: string[]
+  mae?: number
+  mfe?: number
 }
 
 export interface Account {

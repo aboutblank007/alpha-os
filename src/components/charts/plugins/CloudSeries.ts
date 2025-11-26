@@ -104,7 +104,10 @@ export class CloudSeriesRenderer {
                 const x = bar.x * pixelRatio;
                 const y = priceConverter(data.ema1);
 
-                if (y === null) continue;
+                if (y === null) {
+                     firstPoint = true;
+                     continue;
+                }
 
                 const yScaled = y * pixelRatio;
 
@@ -133,7 +136,10 @@ export class CloudSeriesRenderer {
                 const x = bar.x * pixelRatio;
                 const y = priceConverter(data.ema2);
 
-                if (y === null) continue;
+                if (y === null) {
+                     firstPoint = true; // Reset path if point is invalid to avoid zig-zag
+                     continue;
+                }
 
                 const yScaled = y * pixelRatio;
 

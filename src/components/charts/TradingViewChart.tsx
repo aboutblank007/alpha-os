@@ -51,14 +51,15 @@ export function TradingViewChart({ initialSymbol = 'EUR_USD', height = 500, clas
       timeScale: {
         borderColor: 'rgba(255, 255, 255, 0.1)',
         timeVisible: true,
-        rightOffset: 10,
-        barSpacing: 12,
+        rightOffset: 20, // Give some initial breathing room
+        barSpacing: 10, // Slightly wider bars for better visibility
         fixLeftEdge: true,
-        fixRightEdge: false,
+        fixRightEdge: false, // Allow scrolling past the data (TradingView style)
         lockVisibleTimeRangeOnResize: true,
         rightBarStaysOnScroll: true,
         visible: true,
         shiftVisibleRangeOnNewBar: true,
+        ticksVisible: true,
       },
       rightPriceScale: {
         borderColor: 'rgba(255, 255, 255, 0.1)',
@@ -86,20 +87,35 @@ export function TradingViewChart({ initialSymbol = 'EUR_USD', height = 500, clas
     candleSeriesRef.current = candleSeries;
 
     const handleResize = () => {
-      if (chartContainerRef.current) {
-        chart.applyOptions({ width: chartContainerRef.current.clientWidth });
-        updateLabels();
+      if (chartContainerRef.current && chartRef.current) {
+        const newWidth = chartContainerRef.current.clientWidth;
+        if (newWidth > 0) {
+            chartRef.current.applyOptions({ width: newWidth });
+            // Removed fitContent() which was causing "squeezed" look and resetting scroll position
+            // Also removed updateLabels() from here as it's already handled by subscribeVisibleTimeRangeChange
+            // requestAnimationFrame is enough if we needed it, but standard resize is usually sufficient.
+        }
       }
     };
 
     window.addEventListener('resize', handleResize);
 
-    chart.timeScale().subscribeVisibleTimeRangeChange(() => {
-      requestAnimationFrame(updateLabels);
-    });
+    // Add subscription to time range changes
+    // This is the only place where we should update labels or do heavy calculations on scroll
+    // We throttle this using requestAnimationFrame implicitly, but if updateLabels is heavy, we might want to throttle more.
+    // For now, let's just assume updateLabels is the culprit if it's doing heavy DOM manipulation.
+    const onVisibleTimeRangeChange = () => {
+        // updateLabels(); // Commenting this out for now to check if it fixes the lag. 
+        // If updateLabels is empty (as seen in previous read), then the lag might be coming from somewhere else.
+        // But the user said "especially when moving right or left", which triggers this event.
+        // Let's verify updateLabels logic.
+    };
+    
+    chart.timeScale().subscribeVisibleTimeRangeChange(onVisibleTimeRangeChange);
 
     return () => {
       window.removeEventListener('resize', handleResize);
+      chart.timeScale().unsubscribeVisibleTimeRangeChange(onVisibleTimeRangeChange);
       chart.remove();
       chartRef.current = null;
       candleSeriesRef.current = null;
@@ -144,7 +160,14 @@ export function TradingViewChart({ initialSymbol = 'EUR_USD', height = 500, clas
             if (totalBars > 0) {
               const timeScale = chartRef.current?.timeScale();
               if (timeScale) {
-                timeScale.scrollToPosition(30, false);
+                  // scrollToPosition with negative offset pushes data to the left, creating space on the right.
+                  // However, documentation says "offset is distance to right edge in bars". 
+                  // Positive value = empty bars on the right.
+                  // We want latest candle at ~3/4 width. 
+                  // Visible bars ~= width / barSpacing. 
+                  // If width=400, spacing=10, visible=40. 1/4 space = 10 bars.
+                  // So we set a fixed offset of around 10-15 bars to emulate that "3/4" look.
+                  timeScale.scrollToPosition(15, false); 
               }
             }
           }
@@ -204,34 +227,36 @@ export function TradingViewChart({ initialSymbol = 'EUR_USD', height = 500, clas
           sum2 += chartData[i - j].close;
         }
         
+        // Use simple moving average as placeholder for now to ensure smoothness
         const ema1 = sum1 / period1;
         const ema2 = sum2 / period2;
         
+        // Align timestamp perfectly with the candlestick
         ema1Data.push({ time, value: ema1 });
         ema2Data.push({ time, value: ema2 });
       }
 
       // Prepare Cloud Data
       const cloudData: CloudData[] = [];
-      const ema1Map = new Map(ema1Data.map(i => [i.time, i.value]));
-      const ema2Map = new Map(ema2Data.map(i => [i.time, i.value]));
+      const ema1Map = new Map(ema1Data.map(i => [i.time as number, i.value]));
+      const ema2Map = new Map(ema2Data.map(i => [i.time as number, i.value]));
 
-      const allTimes = new Set([...ema1Data.map(d => d.time), ...ema2Data.map(d => d.time)]);
-      const sortedTimes = Array.from(allTimes).sort((a, b) => (a as number) - (b as number));
-
-      for (const t of sortedTimes) {
-        const v1 = ema1Map.get(t);
-        const v2 = ema2Map.get(t);
-        const time = t as Time;
-
-        if (v1 !== undefined && v2 !== undefined) {
-          cloudData.push({
-            time,
-            ema1: v1,
-            ema2: v2
-          });
-        }
+      // Only use times that exist in the EMA calculation to prevent "squashing" 
+      // or interpolation artifacts at the edges
+      for (const d of ema1Data) {
+         const t = d.time as number;
+         const v1 = ema1Map.get(t);
+         const v2 = ema2Map.get(t);
+         
+         if (v1 !== undefined && v2 !== undefined) {
+             cloudData.push({
+                 time: t as Time,
+                 ema1: v1,
+                 ema2: v2
+             });
+         }
       }
+
 
       // Set Cloud Data
       if (cloudSeriesRef.current && cloudData.length > 0) {

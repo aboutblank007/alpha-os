@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { TrendingUp, DollarSign, Target, Activity, Calendar, ArrowRight, Share2, FileDown } from 'lucide-react';
+import { TrendingUp, DollarSign, Target, Activity, Calendar, ArrowRight, Share2, FileDown, Zap, X } from 'lucide-react';
 import { StatCard } from '@/components/Card';
 import { EquityCurve } from '@/components/EquityCurve';
 import { RecentTrades } from '@/components/RecentTrades';
@@ -15,6 +15,7 @@ import { Button } from '@/components/ui/Button';
 import { Modal } from '@/components/ui/Modal';
 import { TradingViewChart } from '@/components/charts/TradingViewChart';
 import { MarketWatch } from '@/components/MarketWatch';
+import { MarketSessions } from '@/components/MarketSessions';
 import { DndContext, closestCenter, KeyboardSensor, PointerSensor, useSensor, useSensors, DragOverlay, defaultDropAnimationSideEffects, DragStartEvent, DragEndEvent } from '@dnd-kit/core';
 import { arrayMove, SortableContext, sortableKeyboardCoordinates, rectSortingStrategy } from '@dnd-kit/sortable';
 import { SortableItem } from '@/components/dashboard/SortableItem';
@@ -35,6 +36,12 @@ type Period = '1W' | '1M' | '3M' | 'YTD' | 'ALL';
 type ConfirmKind = 'export' | 'share' | 'reset' | null;
 interface TagItem { id: string; date: string; label: string }
 
+const WORKSPACE_PRESETS: Record<string, string[]> = {
+    '默认工作区': ['market', 'marketWatch', 'chart', 'symbols', 'orders', 'insights', 'sentiment', 'alerts', 'sessions', 'recent'],
+    '分析': ['chart', 'insights', 'sentiment', 'symbols', 'recent'],
+    '策略': ['market', 'alerts', 'sessions', 'marketWatch', 'symbols']
+};
+
 export default function DashboardPage() {
     const [trades, setTrades] = useState<Trade[]>([]);
     const [stats, setStats] = useState<DashboardStats>({
@@ -50,11 +57,13 @@ export default function DashboardPage() {
     const [tags, setTags] = useState<TagItem[]>([]);
     const [confirm, setConfirm] = useState<ConfirmKind>(null);
     const [workspace, setWorkspace] = useState<string>('默认工作区');
+    const [isMobile, setIsMobile] = useState(false);
+    const [isFocusMode, setIsFocusMode] = useState(false);
 
     // Default layout with new components
     const [layout, setLayout] = useState<string[]>(() => {
-        const saved = typeof window !== 'undefined' ? localStorage.getItem('alphaos_layout_v4') : null;
-        return saved ? JSON.parse(saved) : ['market', 'marketWatch', 'chart', 'symbols', 'orders', 'insights', 'sentiment', 'alerts', 'recent'];
+        const saved = typeof window !== 'undefined' ? localStorage.getItem('alphaos_layout_v5') : null;
+        return saved ? JSON.parse(saved) : ['market', 'marketWatch', 'chart', 'symbols', 'orders', 'insights', 'sentiment', 'alerts', 'sessions', 'recent'];
     });
 
     const [activeId, setActiveId] = useState<string | null>(null);
@@ -62,6 +71,19 @@ export default function DashboardPage() {
 
     const account = useTradeStore(state => state.account);
     const isConnected = useMarketStore(state => state.isConnected);
+
+    // Handle workspace change
+    useEffect(() => {
+        if (typeof window === 'undefined') return;
+        
+        const saved = localStorage.getItem(`alphaos_layout_v5_${workspace}`);
+        if (saved) {
+            setLayout(JSON.parse(saved));
+        } else {
+            // Fallback to preset or default if preset missing
+            setLayout(WORKSPACE_PRESETS[workspace] || WORKSPACE_PRESETS['默认工作区']);
+        }
+    }, [workspace]);
 
     const handleTrade = async (symbol: string, side: 'BUY' | 'SELL') => {
         try {
@@ -87,6 +109,16 @@ export default function DashboardPage() {
             alert(`Trade Failed: ${e instanceof Error ? e.message : 'Unknown error'}`);
         }
     };
+
+    // Check for mobile on mount
+    useEffect(() => {
+        const checkMobile = () => {
+            setIsMobile(window.innerWidth < 768);
+        };
+        checkMobile();
+        window.addEventListener('resize', checkMobile);
+        return () => window.removeEventListener('resize', checkMobile);
+    }, []);
 
     const sensors = useSensors(
         useSensor(PointerSensor, {
@@ -119,7 +151,6 @@ export default function DashboardPage() {
         return () => {
             supabase.removeChannel(channel);
         };
-        // eslint-disable-next-line react-hooks/exhaustive-deps
     }, []);
 
     useEffect(() => {
@@ -133,6 +164,42 @@ export default function DashboardPage() {
         return () => window.removeEventListener('keydown', onKey);
     }, []);
 
+    useEffect(() => {
+        if (trades.length === 0 && !account) return;
+
+        const closed = trades.filter(t => t.status === 'closed');
+        const sortedTrades = [...closed].sort((a, b) => new Date(a.created_at).getTime() - new Date(b.created_at).getTime());
+        
+        const totalPnL = sortedTrades.reduce((sum, t) => sum + t.pnl_net, 0);
+        
+        // Use account balance to determine start balance if available
+        // initial = current - totalPnL
+        const startBalance = account ? (account.balance - totalPnL) : 10000;
+
+        let cumulative = startBalance;
+        const curve = sortedTrades.map(trade => {
+            cumulative += trade.pnl_net;
+            return {
+                date: new Date(trade.created_at).toLocaleDateString('zh-CN', { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' }),
+                equity: cumulative,
+            };
+        });
+        
+        // If we have account but no trades, show a straight line or single point
+        if (curve.length === 0 && account) {
+            curve.push({
+                date: new Date().toLocaleDateString('zh-CN', { month: '2-digit', day: '2-digit' }),
+                equity: account.balance
+            });
+        }
+
+        setEquityData(curve);
+
+        // Recalculate stats with correct starting balance
+        calculateStats(closed, trades.length, startBalance);
+
+    }, [trades, account]);
+
     async function fetchTrades() {
         try {
             const { data, error } = await supabase
@@ -144,11 +211,7 @@ export default function DashboardPage() {
 
             if (data) {
                 setTrades(data);
-                const closed = data.filter(t => t.status === 'closed');
-                calculateStats(closed, data.length); // Pass total count (active + closed)
-
-                const sortedTrades = [...closed].sort((a, b) => new Date(a.created_at).getTime() - new Date(b.created_at).getTime());
-                generateEquityCurve(sortedTrades);
+                // Stats and Equity curve are now handled by useEffect
             }
         } catch (error: unknown) {
             const err = error as Record<string, unknown>;
@@ -183,15 +246,15 @@ export default function DashboardPage() {
         }
     }
 
-    function calculateStats(closedTrades: Trade[], totalCount: number) {
+    function calculateStats(closedTrades: Trade[], totalCount: number, startBalance: number = 10000) {
         const wins = closedTrades.filter(t => t.pnl_net > 0).length;
         const totalPnL = closedTrades.reduce((sum, t) => sum + t.pnl_net, 0);
         const totalWins = closedTrades.filter(t => t.pnl_net > 0).reduce((sum, t) => sum + t.pnl_net, 0);
         const totalLosses = Math.abs(closedTrades.filter(t => t.pnl_net < 0).reduce((sum, t) => sum + t.pnl_net, 0));
 
         // Compute Max Drawdown from equity curve built from closed trades
-        let peak = 10000;
-        let equity = 10000;
+        let peak = startBalance;
+        let equity = startBalance;
         let mdd = 0;
         closedTrades
             .slice()
@@ -217,17 +280,6 @@ export default function DashboardPage() {
         });
     }
 
-    function generateEquityCurve(trades: Trade[]) {
-        let cumulative = 10000; // Initial balance
-        const curve = trades.map(trade => {
-            cumulative += trade.pnl_net;
-            return {
-                date: new Date(trade.created_at).toLocaleDateString('zh-CN', { month: '2-digit', day: '2-digit' }),
-                equity: cumulative,
-            };
-        });
-        setEquityData(curve);
-    }
 
     // Risk alerts logic moved to component, but we need to trigger audio here if needed or move audio to component?
     // The AudioContext logic was in useEffect dependent on alerts.
@@ -297,10 +349,10 @@ export default function DashboardPage() {
     }
 
     function resetLayout() {
-        const defaultLayout = ['market', 'chart', 'symbols', 'orders', 'insights', 'sentiment', 'alerts', 'recent'];
+        const defaultLayout = WORKSPACE_PRESETS[workspace] || WORKSPACE_PRESETS['默认工作区'];
         setLayout(defaultLayout);
-        localStorage.setItem('alphaos_layout_v3', JSON.stringify(defaultLayout));
-        logsRef.current.push({ time: Date.now(), action: 'reset-layout' });
+        localStorage.setItem(`alphaos_layout_v5_${workspace}`, JSON.stringify(defaultLayout));
+        logsRef.current.push({ time: Date.now(), action: `reset-layout-${workspace}` });
         localStorage.setItem('alphaos_logs', JSON.stringify(logsRef.current));
     }
 
@@ -316,7 +368,7 @@ export default function DashboardPage() {
                 const oldIndex = items.indexOf(active.id as string);
                 const newIndex = items.indexOf(over.id as string);
                 const newLayout = arrayMove(items, oldIndex, newIndex);
-                localStorage.setItem('alphaos_layout_v4', JSON.stringify(newLayout));
+                localStorage.setItem(`alphaos_layout_v5_${workspace}`, JSON.stringify(newLayout));
                 return newLayout;
             });
         }
@@ -371,6 +423,7 @@ export default function DashboardPage() {
                 case 'insights':
                 case 'sentiment':
                 case 'alerts':
+                case 'sessions':
                     return 'h-[250px] md:h-[300px]';
                 default:
                     return 'h-[250px] md:h-[300px]';
@@ -413,6 +466,8 @@ export default function DashboardPage() {
                     return <MarketWatch isConnected={isConnected} onTrade={handleTrade} onSymbolSelect={setSelectedSymbol} />;
                 case 'alerts':
                     return <RiskAlerts stats={stats} onResetLayout={() => setConfirm('reset')} />;
+                case 'sessions':
+                    return <MarketSessions />;
                 default:
                     return null;
             }
@@ -445,6 +500,176 @@ export default function DashboardPage() {
         );
     }
 
+    // Mobile Render (Static Layout)
+    if (isMobile) {
+        // Focus Mode Render
+        if (isFocusMode) {
+            return (
+                <div className="fixed inset-0 bg-gradient-to-b from-slate-950 to-slate-900 z-50 flex flex-col safe-area-inset-bottom overflow-hidden">
+                    {/* Focus Header - Glassmorphism */}
+                    <div className="flex items-center justify-between px-4 h-14 border-b border-white/5 bg-slate-950/80 backdrop-blur-xl shrink-0 z-50 shadow-sm">
+                        <div className="flex items-center gap-3">
+                            <div className="p-1.5 rounded-lg bg-gradient-to-br from-amber-500/20 to-amber-600/10 text-amber-500 ring-1 ring-amber-500/20 shadow-[0_0_15px_-3px_rgba(245,158,11,0.2)]">
+                                <Zap size={16} fill="currentColor" className="drop-shadow-sm" />
+                            </div>
+                            <div className="flex flex-col justify-center">
+                                <div className="text-xs font-bold text-slate-200 leading-none tracking-wide uppercase">Focus Mode</div>
+                                <div className="text-[10px] text-slate-400 font-mono mt-1 flex items-center gap-1.5">
+                                    <span className="text-slate-300">${(account?.equity ?? 0).toFixed(2)}</span>
+                                    <span className={`font-medium ${stats.totalPnL >= 0 ? 'text-accent-success' : 'text-accent-danger'}`}>
+                                        {stats.totalPnL >= 0 ? '+' : ''}{stats.totalPnL.toFixed(2)}
+                                    </span>
+                                </div>
+                            </div>
+                        </div>
+                        <button 
+                            onClick={() => setIsFocusMode(false)}
+                            className="p-2 -mr-2 text-slate-400 hover:text-white active:text-white transition-colors rounded-full hover:bg-white/5"
+                        >
+                            <X size={20} />
+                        </button>
+                    </div>
+
+                    {/* Main Content */}
+                    <div className="flex-1 flex flex-col overflow-hidden">
+                        {/* Chart - Major Visual Area */}
+                        <div className="h-[38vh] w-full border-b border-white/5 relative bg-slate-950/50 shrink-0">
+                            <div className="absolute inset-0 bg-[url('/grid.svg')] opacity-[0.02] pointer-events-none"></div>
+                            <TradingViewChart className="h-full" height={350} initialSymbol={selectedSymbol} key={selectedSymbol} />
+                        </div>
+
+                        {/* Market Watch - Takes remaining space for full list */}
+                        <div className="flex-1 w-full border-b border-white/5 bg-slate-900/30 backdrop-blur-sm overflow-hidden min-h-0">
+                            <MarketWatch 
+                                isConnected={isConnected} 
+                                onTrade={handleTrade} 
+                                onSymbolSelect={setSelectedSymbol} 
+                                variant="focus" 
+                            />
+                        </div>
+
+                        {/* Orders - Fixed height bottom sheet */}
+                        <div className="h-[22vh] w-full bg-slate-900/50 backdrop-blur-sm overflow-hidden shrink-0">
+                            <OngoingOrders compact={true} />
+                        </div>
+                    </div>
+                </div>
+            );
+        }
+
+        return (
+            <div className="max-w-screen-3xl mx-auto pb-20 space-y-6">
+                {/* Premium Welcome Banner - Simplified for Mobile */}
+                <div className="relative overflow-hidden rounded-2xl glass-panel-strong p-6 border border-white/10 shadow-2xl">
+                    <div className="relative z-10 flex flex-col gap-4">
+                        <div className="flex items-center justify-between">
+                             <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-white/5 border border-white/10 text-xs font-medium text-accent-primary backdrop-blur-md shadow-sm w-fit">
+                                <span className="relative flex h-2 w-2">
+                                    <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-accent-primary opacity-75"></span>
+                                    <span className="relative inline-flex rounded-full h-2 w-2 bg-accent-primary"></span>
+                                </span>
+                                {workspace}
+                            </div>
+                            <button 
+                                onClick={() => setIsFocusMode(true)}
+                                className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-amber-500/10 border border-amber-500/20 text-amber-500 text-xs font-bold hover:bg-amber-500/20 transition-colors"
+                            >
+                                <Zap size={14} fill="currentColor" />
+                                专注模式
+                            </button>
+                        </div>
+                        
+                        <h1 className="text-3xl font-bold text-white tracking-tight-custom text-balance drop-shadow-lg">
+                            <span className="text-gradient">AlphaOS</span>
+                        </h1>
+                        <p className="text-sm text-slate-400 font-light">
+                            {openTrades.length} 个活跃信号
+                        </p>
+                    </div>
+                </div>
+
+                {/* Stats - Stacked */}
+                <div className="grid grid-cols-2 gap-3">
+                    <div className="col-span-1">
+                        <StatCard
+                            label="净资产"
+                            value={`$${(account?.equity ?? 0).toFixed(0)}`}
+                            trend={stats.totalPnL > 0 ? 8.0 : -5.0}
+                            icon={<DollarSign size={20} />}
+                            subValue=""
+                        />
+                    </div>
+                    <div className="col-span-1">
+                        <StatCard
+                            label="胜率"
+                            value={`${stats.winRate.toFixed(1)}%`}
+                            trend={2.5}
+                            icon={<Target size={20} />}
+                            subValue=""
+                        />
+                    </div>
+                </div>
+
+                {/* Widgets - Stacked Order */}
+                <div className="space-y-4">
+                    {/* Chart First */}
+                    <div className="h-[350px]">
+                         <TradingViewChart className="h-full" height={350} initialSymbol={selectedSymbol} key={selectedSymbol} />
+                    </div>
+                    
+                    {/* Market Watch */}
+                    <div className="h-[400px]">
+                        <MarketWatch isConnected={isConnected} onTrade={handleTrade} onSymbolSelect={setSelectedSymbol} />
+                    </div>
+
+                    {/* Equity Curve */}
+                    <div className="h-[300px]">
+                         <EquityCurve
+                            data={equityData}
+                            period={period}
+                            overlays={overlays}
+                            tags={tags}
+                            onPeriodChange={setPeriod}
+                            onToggleOverlay={toggleOverlay}
+                            onAddTag={() => addTag(equityData.slice(-1)[0]?.date ?? '', '策略标记')}
+                        />
+                    </div>
+
+                     {/* Orders */}
+                     <div className="h-[350px]">
+                        <OngoingOrders />
+                    </div>
+
+                    {/* Insights */}
+                    <div className="grid grid-cols-2 gap-3">
+                        <div className="col-span-1 h-[200px] overflow-hidden rounded-xl">
+                            <TradingInsights trades={trades} />
+                        </div>
+                         <div className="col-span-1 h-[200px] overflow-hidden rounded-xl">
+                            <SentimentAnalysis trades={trades} />
+                        </div>
+                    </div>
+                    
+                     {/* Alerts & Sessions */}
+                     <div className="space-y-4">
+                         <div className="h-[250px]">
+                            <RiskAlerts stats={stats} onResetLayout={() => setConfirm('reset')} />
+                         </div>
+                         <div className="h-[250px]">
+                            <MarketSessions />
+                         </div>
+                     </div>
+
+                    {/* Recent Trades */}
+                    <div className="h-[400px]">
+                         <RecentTrades trades={closedTrades} />
+                    </div>
+                </div>
+            </div>
+        );
+    }
+
+    // Desktop Render (Original Dnd Layout)
     return (
         <div className="max-w-screen-3xl mx-auto pb-12 md:pb-20 space-y-4 md:space-y-8">
             {/* Premium Welcome Banner */}
@@ -479,7 +704,11 @@ export default function DashboardPage() {
                             <Calendar size={16} className="text-slate-400 group-hover:text-white transition-colors md:w-[18px] md:h-[18px]" />
                             <span>本月</span>
                         </button>
-                        <Button variant="primary" rightIcon={<ArrowRight size={16} />} className="btn-premium shadow-lg shadow-accent-primary/20 text-xs md:text-sm px-4 md:px-5 py-2 md:py-3">新建分析</Button>
+                        <a href="/analytics" className="group">
+                            <Button variant="primary" rightIcon={<ArrowRight size={16} />} className="btn-premium shadow-lg shadow-accent-primary/20 text-xs md:text-sm px-4 md:px-5 py-2 md:py-3">
+                                智能分析
+                            </Button>
+                        </a>
                         <Button variant="secondary" leftIcon={<Share2 size={16} />} onClick={() => setConfirm('share')} className="backdrop-blur-sm text-xs md:text-sm px-4 md:px-5 py-2 md:py-3">分享</Button>
                         <Button variant="secondary" leftIcon={<FileDown size={16} />} onClick={() => setConfirm('export')} className="backdrop-blur-sm text-xs md:text-sm px-4 md:px-5 py-2 md:py-3">导出</Button>
 

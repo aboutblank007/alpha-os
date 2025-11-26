@@ -17,11 +17,15 @@ import { usePathname } from 'next/navigation';
 import { useBridgeSync } from '@/hooks/useBridgeSync';
 import { useTradeStore } from '@/store/useTradeStore';
 import { SignalListener } from '@/components/SignalListener'; // Import SignalListener
+import { useSignalStore } from '@/store/useSignalStore';
 
 export function AppShell({ children }: { children: React.ReactNode }) {
   const [isSidebarOpen, setIsSidebarOpen] = useState(true);
   const [scrolled, setScrolled] = useState(false);
   const pathname = usePathname();
+
+  // Signal Store
+  const { unreadCount, toggleHistory } = useSignalStore();
 
   // Start Bridge Sync (Polling)
   useBridgeSync();
@@ -215,9 +219,14 @@ export function AppShell({ children }: { children: React.ReactNode }) {
               </div>
             </div>
             <div className="hidden md:block h-8 w-[1px] bg-white/10"></div>
-            <button className="relative rounded-full p-2 text-slate-400 hover:bg-white/5 hover:text-white transition-all">
+            <button 
+              onClick={toggleHistory}
+              className="relative rounded-full p-2 text-slate-400 hover:bg-white/5 hover:text-white transition-all"
+            >
               <Bell size={18} />
-              <span className="absolute right-2 top-2 h-1.5 w-1.5 rounded-full bg-accent-danger ring-2 ring-[#030712]"></span>
+              {unreadCount > 0 && (
+                <span className="absolute right-2 top-2 h-1.5 w-1.5 rounded-full bg-accent-danger ring-2 ring-[#030712]"></span>
+              )}
             </button>
           </div>
         </header>

@@ -1,11 +1,13 @@
 # AlphaOS 项目实施与状态报告
 
-**日期**: 2024-11-25
-**版本**: Phase 1 & 2 Complete (Signal System Deployed)
+**日期**: 2024-11-26
+**版本**: Phase 3 Preview (Data Intelligence & Mobile Polish)
 
 ## 1. 项目概览
 
 本项目旨在将 AlphaOS 从一个基础的交易监控工具升级为**机构级智能交易系统**。根据战略路线图，我们成功完成了第一阶段（坚实基础）和第二阶段（交易核心增强）的开发任务。核心架构从依赖外部 Webhook 转向了更可靠的 MT5 原生指标与 Python Bridge 的闭环系统。
+
+**最新更新 (2024-11-26)**: 正式启动 **Phase 3: 数据智能 (Data Intelligence)** 预览，上线了全新的分析模块（MAE/MFE、情绪热力图、策略分析）。同时，深度打磨了移动端体验，推出了高度定制的"专注模式"和灵活的工作区管理系统。
 
 ## 2. 已完成实施内容
 
@@ -45,9 +47,39 @@
 *   **工程化 (DevOps)**
     *   配置了 GitHub Actions (`ci.yml`)，确保代码提交时的质量检查 (Linting & Type Checking)。
 
-## 3. 信号系统部署详情 (2024-11-25 更新)
+## 3. 移动端与UX 增强 (2024-11-26 新增)
 
-### 3.1 系统架构
+### 3.1 移动端体验重构
+针对移动端触摸操作的特点，进行了深度的交互优化：
+
+*   **专注交易模式 (Focus Mode)**:
+    *   **视觉升级**: 采用深邃的渐变背景和玻璃拟态 Header，提供沉浸式体验。
+    *   **布局重构**: K线图 (38%)、市场监控 (Flex)、持仓管理 (22%) 黄金比例分割，操作更顺手。
+    *   **功能**: 移除一切干扰，仅保留核心交易组件。
+*   **图表与交互优化**:
+    *   **Lightweight Charts 调优**: 修复了移动端缩放导致指标挤压的问题；调整了默认视口，使最新 K 线停留在屏幕右侧 3/4 处，符合专业看盘习惯。
+    *   **性能提升**: 优化了图表滚动事件监听，解决了本地运行时的卡顿问题。
+
+### 3.2 信号历史管理
+*   **Signal Store**: 创建了 `useSignalStore` 进行全局信号状态管理。
+*   **历史面板**: 新增 `SignalHistory` 组件，侧滑展示历史信号列表。
+*   **联动优化**: 点击历史信号可直接调出交易面板。
+
+### 3.3 工作区管理 (Workspace)
+*   **多场景预设**: 实现了 **默认**、**分析**、**策略** 三种工作区预设，一键切换布局。
+*   **独立持久化**: 每个工作区的布局调整都会独立保存，互不干扰。
+
+## 4. 数据智能 (Phase 3 Preview)
+
+全新上线的 `/analytics` 模块，提供深度复盘能力：
+
+*   **执行分析 (MAE/MFE)**: `MaeMfeScatterChart` 组件，通过散点图直观展示每笔交易的最大不利偏移（MAE）和最大有利偏移（MFE），辅助优化止盈止损设置。
+*   **情绪热力图**: `SentimentHeatmap` 组件，可视化展示过去 30 天的交易频率与情绪评分，帮助发现情绪波动对交易的影响。
+*   **策略表现**: `StrategyBreakdown` 组件，按策略分类统计胜率和盈亏贡献。
+
+## 5. 信号系统部署详情
+
+### 5.1 系统架构
 
 ```
 MT5 指标 (PivotTrendSignals.mq5)
@@ -62,12 +94,14 @@ Python Bridge API
 Supabase (signals 表)
     │
     ▼ Realtime 推送
-前端 SignalListener
+前端 SignalListener (Store)
     │
-    ▼ Toast 通知 + 打开 TradePanel
+    ▼ Toast 通知 + 写入 SignalHistory
+    │
+    ▼ 用户点击 -> 打开 TradePanel
 ```
 
-### 3.2 关键配置
+### 5.2 关键配置
 
 **Docker 卷映射** (`docker-compose.yml`):
 ```yaml
@@ -93,36 +127,30 @@ volumes:
 docker exec mt5-vnc chmod 777 "/config/.wine/drive_c/Program Files/MetaTrader 5/MQL5/Files/AlphaOS/Signals/"
 ```
 
-### 3.3 验证日志
-
-**成功的信号处理日志**:
-```
-Starting signal watcher on /app/signals...
-🔔 New Signal Received: {'symbol': 'EURUSD', 'action': 'BUY', 'price': 1.15291, 'sl': 1.15271, 'tp': 1.15344, 'comment': '买入'}
-✅ Signal saved to DB
-```
-
-## 4. 遇到的问题与解决方案
-
-在实施过程中，我们遇到并解决了以下关键技术挑战：
+## 6. 遇到的问题与解决方案
 
 | 问题分类 | 问题描述 | 解决方案 |
 | :--- | :--- | :--- |
 | **架构限制** | 用户无 TradingView 会员，无法使用 Webhook 推送信号。 | **方案转型**: 开发 MQL5 原生指标，配合 Python 文件监听器，实现本地信号闭环。 |
 | **Docker 卷共享** | MT5 和 Bridge 容器无法共享信号文件。 | **共享卷配置**: 创建 `signal_data` 卷，分别挂载到两个容器的对应目录。 |
 | **文件权限** | MT5 进程 (abc 用户) 无法写入 root 拥有的目录。 | **权限修复**: `chmod 777` 信号目录，确保 MT5 可写入。 |
-| **环境变量** | Bridge 容器中 Supabase 环境变量为空。 | **变量映射修复**: docker-compose 中使用 `${NEXT_PUBLIC_SUPABASE_URL}` 而非 `${SUPABASE_URL}`。 |
-| **权限/沙箱** | `npm install` 和 Lint 工具在沙箱环境中报错 `EPERM`。 | **权限升级**: 申请并使用 `all` 权限运行关键的构建命令。 |
-| **运行时错误** | `SignalListener` 组件报错 "variable access before declaration"。 | **代码重构**: 调整函数声明顺序，优化 `useEffect` 依赖项。 |
-| **代码质量** | 大量的 "unused variable" 和 "any type" 警告。 | **全面清理**: 执行了严格的 Lint 检查，移除未使用的状态变量。 |
-| **数据完整性** | 交易平仓时可能出现的"部分平仓"逻辑复杂。 | **逻辑完善**: 在 `/api/trades` 中实现了拆单逻辑。 |
+| **移动端交互** | 拖拽排序与页面滚动冲突，操作不流畅。 | **交互重构**: 移动端禁用拖拽，采用固定堆叠布局；开发“专注模式”提供纯粹体验。 |
+| **图表渲染** | 移动端缩放时指标变形，连线混乱。 | **逻辑修正**: 移除 `fitContent` 强制缩放；在指标渲染器中增加无效点检测，断开重绘路径。 |
+| **性能优化** | 图表拖动时本地运行卡顿。 | **事件优化**: 移除冗余的 `updateLabels` 频繁调用，优化 ResizeObserver 回调。 |
 
-## 5. 文件清单
+## 7. 文件清单
 
 ### 新增文件
 
 | 文件路径 | 说明 |
 |----------|------|
+| `src/app/analytics/page.tsx` | **New** 数据智能分析页面 |
+| `src/components/charts/MaeMfeScatterChart.tsx` | **New** MAE/MFE 散点图组件 |
+| `src/components/SentimentHeatmap.tsx` | **New** 情绪热力图组件 |
+| `src/components/StrategyBreakdown.tsx` | **New** 策略分析组件 |
+| `src/store/useSignalStore.ts` | 信号状态管理 |
+| `src/components/SignalHistory.tsx` | 信号历史侧边栏 |
+| `src/components/MarketSessions.tsx` | 市场时段可视化组件 |
 | `src/store/useMarketStore.ts` | 行情数据 Zustand Store |
 | `src/store/useTradeStore.ts` | 交易数据 Zustand Store |
 | `src/store/useUserStore.ts` | 用户配置 Zustand Store |
@@ -139,20 +167,23 @@ Starting signal watcher on /app/signals...
 
 | 文件路径 | 修改内容 |
 |----------|----------|
+| `src/app/dashboard/page.tsx` | 集成工作区切换、专注模式、市场时段组件 |
+| `src/components/charts/TradingViewChart.tsx` | 修复缩放挤压、指标渲染、性能优化 |
+| `src/components/charts/plugins/CloudSeries.ts` | 修复指标连线伪影 |
 | `src/components/TradePanel.tsx` | 添加风控计算器、OCO、Auto SL/TP、信号预填 |
-| `src/components/AppShell.tsx` | 集成 SignalListener |
+| `src/components/AppShell.tsx` | 集成 SignalListener，添加铃铛图标联动 |
 | `src/hooks/useBridgeStatus.ts` | 改为更新 Zustand Store |
 | `trading-bridge/src/main.py` | 添加信号文件监听器 |
 | `trading-bridge/docker/docker-compose.yml` | 添加共享卷和环境变量映射 |
 
-## 6. 下一步计划 (Phase 3 Preview)
+## 8. 下一步计划 (Phase 4 & Beyond)
 
-当前系统已具备坚实的基础和核心交易能力，下一阶段将聚焦于 **数据智能 (Data Intelligence)**：
+当前系统已具备了交易执行和初步的数据复盘能力，下一阶段将聚焦于 **自动化与 AI 赋能**：
 
-1.  **交易复盘体系**: 实现 MAE/MFE 可视化分析，优化止损设置。
-2.  **情绪分析**: 结合交易日记的情绪评分，生成热力图。
-3.  **策略标签**: 为每笔交易自动或手动打标 (Trend, Reversal, Breakout)，分析策略胜率。
+1.  **自动化策略执行**: 探索将 MQL5 信号直接对接自动下单（需严格风控）。
+2.  **AI 交易助手**: 基于 LLM 分析当前市场情绪和新闻，给出辅助建议。
+3.  **多账户管理**: 支持同时管理多个 MT5 账户。
 
 ---
 *Report generated by AlphaOS AI Assistant*
-*Last Updated: 2024-11-25*
+*Last Updated: 2024-11-26*
