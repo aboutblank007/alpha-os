@@ -14,12 +14,18 @@ int OnInit()
    Print("BridgeEA (HTTP): Initializing...");
    Print("Target API URL: ", ApiUrl);
    
+   if(MarketBookAdd(Symbol()))
+      Print("Subscribed to MarketBook for ", Symbol());
+   else
+      Print("Failed to subscribe to MarketBook for ", Symbol());
+
    EventSetMillisecondTimer(PollInterval);
    return(INIT_SUCCEEDED);
   }
 
 void OnDeinit(const int reason)
   {
+   MarketBookRelease(Symbol());
    EventKillTimer();
   }
 
@@ -160,6 +166,13 @@ void CheckForCommands()
              
              SendHistoryData(req_id, symbol, tf, count, from_t, to_t);
          }
+         else if (type == "GET_DOM") {
+             string req_id = ExtractJsonString(json, "request_id");
+             string symbol = ExtractJsonString(json, "symbol");
+             if(symbol == "") symbol = Symbol();
+             
+             SendDOMData(req_id, symbol);
+         }
         }
      }
   }
@@ -253,6 +266,63 @@ void SendHistoryData(string req_id, string symbol, ENUM_TIMEFRAMES tf, int count
         Print("Sent history data: ", copied, " candles for ", symbol);
     } else {
         Print("Failed to copy rates for ", symbol);
+    }
+}
+}
+
+//+------------------------------------------------------------------+
+//| Get DOM Data and Send                                            |
+//+------------------------------------------------------------------+
+void SendDOMData(string req_id, string symbol) {
+    MqlBookInfo book[];
+    
+    // Ensure we are subscribed (idempotent)
+    MarketBookAdd(symbol);
+    
+    if(MarketBookGet(symbol, book)) {
+        int size = ArraySize(book);
+        string json = StringFormat("{\"request_id\":\"%s\",\"symbol\":\"%s\",\"count\":%d,\"bids\":[", req_id, symbol, size);
+        
+        string bids_json = "";
+        string asks_json = "";
+        
+        for(int i=0; i<size; i++) {
+            // MqlBookInfo: type, price, volume, volume_real
+            // type: 1=Sell, 2=Buy
+            string item = StringFormat("{\"price\":%.5f,\"volume\":%I64d,\"volume_real\":%.2f}", 
+                                       book[i].price, book[i].volume, book[i].volume_real);
+            
+            if(book[i].type == BOOK_TYPE_BUY) {
+                if(StringLen(bids_json) > 0) bids_json += ",";
+                bids_json += item;
+            }
+            else if(book[i].type == BOOK_TYPE_SELL) {
+                if(StringLen(asks_json) > 0) asks_json += ",";
+                asks_json += item;
+            }
+        }
+        
+        json += bids_json + "],\"asks\":[" + asks_json + "]}";
+        
+        // Send
+        char data[];
+        StringToCharArray(json, data, 0, StringLen(json), CP_UTF8);
+        char res_data[];
+        string headers = "Content-Type: application/json\r\n";
+        string result_headers;
+        
+        WebRequest("POST", ApiUrl + "/data/dom", headers, 500, data, res_data, result_headers);
+        Print("Sent DOM data for ", symbol, " (Items: ", size, ")");
+    } else {
+        Print("Failed to get MarketBook for ", symbol);
+        // Send empty response to unblock
+        string json = StringFormat("{\"request_id\":\"%s\",\"symbol\":\"%s\",\"count\":0,\"bids\":[],\"asks\":[]}", req_id, symbol);
+        char data[];
+        StringToCharArray(json, data, 0, StringLen(json), CP_UTF8);
+        char res_data[];
+        string headers = "Content-Type: application/json\r\n";
+        string result_headers;
+        WebRequest("POST", ApiUrl + "/data/dom", headers, 500, data, res_data, result_headers);
     }
 }
 

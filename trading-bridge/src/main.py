@@ -26,6 +26,8 @@ last_trade = None  # Stores the most recent trade execution
 
 # 历史数据请求存储 { request_id: asyncio.Future }
 history_requests: Dict[str, asyncio.Future] = {}
+# DOM 数据请求存储 { request_id: asyncio.Future }
+dom_requests: Dict[str, asyncio.Future] = {}
 
 # 信号文件目录 (根据 MT5 实际安装位置可能需要调整，或通过 ENV 传入)
 # Docker 环境中应挂载到 /app/signals
@@ -73,6 +75,18 @@ class HistoryData(BaseModel):
     timeframe: str
     data: List[Dict[str, Any]] # List of candles
     count: int
+
+class DOMLevel(BaseModel):
+    price: float
+    volume: int
+    volume_real: float
+
+class DOMData(BaseModel):
+    request_id: str
+    symbol: str
+    count: int
+    bids: List[DOMLevel]
+    asks: List[DOMLevel]
 
 class SignalPayload(BaseModel):
     symbol: str
@@ -146,6 +160,32 @@ class AutomationManager:
                 del history_requests[request_id]
             return None
 
+    async def get_dom_data(self, symbol: str):
+        """
+        Helper to fetch DOM data from MT5 via the async command queue.
+        """
+        request_id = str(uuid.uuid4())
+        command = {
+            "type": "GET_DOM",
+            "request_id": request_id,
+            "symbol": symbol
+        }
+        
+        loop = asyncio.get_running_loop()
+        future = loop.create_future()
+        dom_requests[request_id] = future
+        command_queue.append(command)
+        
+        try:
+            print(f"DEBUG: Requesting DOM for {symbol}...")
+            data = await asyncio.wait_for(future, timeout=5.0)
+            return data
+        except Exception as e:
+            print(f"❌ Failed to fetch DOM for {symbol}: {e}")
+            if request_id in dom_requests:
+                del dom_requests[request_id]
+            return None
+
     async def evaluate_signal(self, signal_data):
         symbol = signal_data.get("symbol")
         
@@ -176,13 +216,16 @@ class AutomationManager:
         ai_mode = rule.get("ai_mode", "indicator_ai")
         
         if ai_mode == 'legacy':
-             print(f"DEBUG: Legacy mode - Auto-Execution Approved for {symbol}. Rule ID: {rule.get('id')}")
              return True, rule
 
         # Data Collection & Remote Inference
         print(f"DEBUG: Fetching context data for {symbol} (Mode: {ai_mode})...")
         
         history_payload = await self.get_history_data(symbol, "PERIOD_H1", 100)
+        dom_payload = None
+        
+        if ai_mode == "dom_ai":
+             dom_payload = await self.get_dom_data(symbol)
         
         if history_payload and "data" in history_payload:
             candles = history_payload["data"]
@@ -201,11 +244,30 @@ class AutomationManager:
                     volume=float(c.get('tick_volume', 0))
                 ))
             
+            # Map DOM Data
+            grpc_bids = []
+            grpc_asks = []
+            if dom_payload:
+                for b in dom_payload.get("bids", []):
+                    grpc_bids.append(alphaos_pb2.DOMLevel(
+                        price=float(b.get("price", 0)),
+                        volume=float(b.get("volume", 0)),
+                        volume_real=float(b.get("volume_real", 0))
+                    ))
+                for a in dom_payload.get("asks", []):
+                    grpc_asks.append(alphaos_pb2.DOMLevel(
+                        price=float(a.get("price", 0)),
+                        volume=float(a.get("volume", 0)),
+                        volume_real=float(a.get("volume_real", 0))
+                    ))
+
             signal_req = alphaos_pb2.SignalRequest(
                 request_id=req_id,
                 symbol=symbol,
                 timeframe="H1",
                 market_context=grpc_candles,
+                dom_bids=grpc_bids,
+                dom_asks=grpc_asks,
                 signal_source="mt5_bridge",
                 action=signal_data.get("action", ""),
                 suggested_entry=float(signal_data.get("price", 0)),
@@ -604,5 +666,16 @@ async def receive_history(history: HistoryData):
         if not future.done():
             future.set_result(history.dict())
         del history_requests[req_id]
+        return {"status": "accepted"}
+    return {"status": "ignored", "reason": "request_id not found or expired"}
+
+@app.post("/data/dom")
+async def receive_dom(dom: DOMData):
+    req_id = dom.request_id
+    if req_id in dom_requests:
+        future = dom_requests[req_id]
+        if not future.done():
+            future.set_result(dom.dict())
+        del dom_requests[req_id]
         return {"status": "accepted"}
     return {"status": "ignored", "reason": "request_id not found or expired"}

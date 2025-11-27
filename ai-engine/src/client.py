@@ -114,6 +114,18 @@ class LocalAIEngine:
             })
         df = pd.DataFrame(data)
         
+        # 1.5 Extract DOM Data
+        dom_bids = request.dom_bids
+        dom_asks = request.dom_asks
+        if dom_bids:
+            logger.info(f"📊 Received DOM Data: {len(dom_bids)} Bids, {len(dom_asks)} Asks")
+            if len(dom_bids) > 0:
+                logger.info(f"   Top Bid: {dom_bids[0].price} ({dom_bids[0].volume})")
+            if len(dom_asks) > 0:
+                logger.info(f"   Top Ask: {dom_asks[0].price} ({dom_asks[0].volume})")
+        else:
+            logger.info("ℹ️ No DOM Data received")
+        
         # 2. Feature Engineering (Simplified Port)
         features = self.calculate_features(df)
         
