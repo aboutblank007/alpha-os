@@ -12,6 +12,8 @@ interface AutomationRule {
     is_enabled: boolean;
     fixed_lot_size: number;
     max_spread_points: number;
+    ai_mode?: 'legacy' | 'indicator_ai' | 'pure_ai';
+    ai_confidence_threshold?: number;
     strategy_id?: string;
 }
 
@@ -36,7 +38,9 @@ export function AutomationRules() {
             const typedData = data.map(r => ({
                 ...r,
                 fixed_lot_size: Number(r.fixed_lot_size),
-                max_spread_points: Number(r.max_spread_points)
+                max_spread_points: Number(r.max_spread_points),
+                ai_mode: r.ai_mode || 'legacy',
+                ai_confidence_threshold: r.ai_confidence_threshold !== null ? Number(r.ai_confidence_threshold) : 0.75
             }));
             setRules(typedData);
         } else {
@@ -45,7 +49,9 @@ export function AutomationRules() {
                 symbol: 'GLOBAL',
                 is_enabled: false,
                 fixed_lot_size: 0.01,
-                max_spread_points: 50
+                max_spread_points: 50,
+                ai_mode: 'legacy',
+                ai_confidence_threshold: 0.75
             }]);
         }
         setLoading(false);
@@ -62,7 +68,9 @@ export function AutomationRules() {
                     symbol: rule.symbol,
                     is_enabled: rule.is_enabled,
                     fixed_lot_size: rule.fixed_lot_size,
-                    max_spread_points: rule.max_spread_points
+                    max_spread_points: rule.max_spread_points,
+                    ai_mode: rule.ai_mode,
+                    ai_confidence_threshold: rule.ai_confidence_threshold
                 };
 
                 if (rule.id) {
@@ -93,7 +101,9 @@ export function AutomationRules() {
             symbol: 'EURUSD',
             is_enabled: false,
             fixed_lot_size: 0.01,
-            max_spread_points: 50
+            max_spread_points: 50,
+            ai_mode: 'legacy',
+            ai_confidence_threshold: 0.75
         }]);
     };
 
@@ -184,6 +194,36 @@ export function AutomationRules() {
                                 className="w-full bg-black/20 border border-surface-border rounded px-3 py-2 text-white font-mono"
                             />
                         </div>
+
+                        {/* AI Mode */}
+                        <div className="md:col-span-3">
+                            <label className="text-xs text-slate-500 mb-1 block">AI 模式</label>
+                            <select 
+                                value={rule.ai_mode || 'legacy'}
+                                onChange={(e) => updateRule(index, 'ai_mode', e.target.value)}
+                                className="w-full bg-black/20 border border-surface-border rounded px-3 py-2 text-white text-sm"
+                            >
+                                <option value="legacy">经典 (Legacy)</option>
+                                <option value="indicator_ai">指标 + AI 过滤</option>
+                                <option value="pure_ai">纯 AI (AlphaZero)</option>
+                            </select>
+                        </div>
+
+                         {/* AI Confidence */}
+                         {rule.ai_mode && rule.ai_mode !== 'legacy' && (
+                            <div className="md:col-span-2">
+                                <label className="text-xs text-slate-500 mb-1 block">AI 信心阈值 ({rule.ai_confidence_threshold})</label>
+                                <input 
+                                    type="range" 
+                                    min="0.5"
+                                    max="0.95"
+                                    step="0.05"
+                                    value={rule.ai_confidence_threshold || 0.75}
+                                    onChange={(e) => updateRule(index, 'ai_confidence_threshold', parseFloat(e.target.value))}
+                                    className="w-full h-2 bg-black/20 rounded-lg appearance-none cursor-pointer"
+                                />
+                            </div>
+                        )}
 
                         {/* Enabled Switch */}
                         <div className="md:col-span-3 flex items-center justify-center gap-3 h-full pt-3">

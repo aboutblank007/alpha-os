@@ -28,10 +28,18 @@ rsync -avz --progress --delete \
     --exclude '.vscode' \
     --exclude 'terminals' \
     --exclude '文档' \
+    --exclude 'trading-bridge/mql5' \
     ./ $SERVER:$REMOTE_DIR/
 
-# Fix permissions for MQL5 files (so MT5 container can read/write/compile)
-ssh $SERVER "chmod -R 777 $REMOTE_DIR/trading-bridge/mql5"
+# Special handling for MQL5 files
+if [ "$SERVICE" == "mt5" ] || [ "$SERVICE" == "all" ]; then
+    echo "📂 Syncing MQL5 files..."
+    rsync -avz --progress \
+        trading-bridge/mql5/ $SERVER:$REMOTE_DIR/trading-bridge/mql5/
+    
+    # Fix permissions for MQL5 files
+    ssh $SERVER "chmod -R 777 $REMOTE_DIR/trading-bridge/mql5"
+fi
 
 # 2. Copy .env if it exists (Always good to ensure env is fresh)
 if [ -f .env.local ]; then
@@ -56,7 +64,20 @@ ssh $SERVER "cd $REMOTE_DIR && \
         echo 'Navigate to trading-bridge/docker for backend services...' && \
         if [ -f .env ]; then cp .env trading-bridge/docker/.env; fi && \
         cd trading-bridge/docker && \
-        docker-compose up -d --build $SERVICE
+        echo '🚀 Using accelerated build with Chinese mirrors...' && \
+        # 清理旧容器和镜像
+        docker-compose down $SERVICE 2>/dev/null || true && \
+        docker system prune -f && \
+        # 使用国内镜像加速构建
+        DOCKER_BUILDKIT=1 docker-compose build \
+            --build-arg PIP_INDEX_URL=https://pypi.tuna.tsinghua.edu.cn/simple \
+            --build-arg PIP_TRUSTED_HOST=pypi.tuna.tsinghua.edu.cn \
+            --build-arg APT_MIRROR=aliyun \
+            $SERVICE && \
+        docker-compose up -d $SERVICE && \
+        echo '📋 Checking service status...' && \
+        sleep 5 && \
+        docker-compose logs --tail=20 $SERVICE
     else
         # Frontend service in root docker-compose.yml
         # Service name is likely 'web' based on your docker-compose.yml
@@ -67,7 +88,15 @@ ssh $SERVER "cd $REMOTE_DIR && \
             TARGET_SERVICE=\"$SERVICE\"
         fi && \
         echo \"Targeting docker-compose service: \$TARGET_SERVICE\" && \
-        docker-compose up -d --build \$TARGET_SERVICE
+        # 强制清理旧的构建缓存，防止硬盘占满
+        docker system prune -f && \
+        # 限制构建并发数，防止内存爆炸 (适用于 Next.js)
+        # 注意：需要在 docker-compose.yml 或 Dockerfile 中配合使用，或者依赖 Swap
+        docker-compose down \$TARGET_SERVICE 2>/dev/null || true && \
+        DOCKER_BUILDKIT=1 docker-compose build \$TARGET_SERVICE && \
+        docker-compose up -d \$TARGET_SERVICE && \
+        sleep 3 && \
+        docker-compose logs --tail=15 \$TARGET_SERVICE
     fi"
 
 echo "✅ Deployment of $SERVICE complete!"

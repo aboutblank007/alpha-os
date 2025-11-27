@@ -3,10 +3,10 @@
 import { useEffect, useState, useCallback } from 'react';
 import { supabase } from '@/lib/supabase';
 import { Toast } from '@/components/ui/Toast';
-import { TradePanel } from '@/components/TradePanel';
-import { ArrowRight } from 'lucide-react';
+import { Bot, ArrowRight } from 'lucide-react';
 import { useSignalStore, Signal } from '@/store/useSignalStore';
 import { SignalHistory } from '@/components/SignalHistory';
+import { TradePanel } from '@/components/TradePanel';
 
 export function SignalListener() {
     const { addSignal, setSignals } = useSignalStore();
@@ -95,6 +95,23 @@ export function SignalListener() {
         supabase.from('signals').update({ status: 'processed' }).eq('id', signal.id).then(() => {});
     };
 
+    // Helper to parse AI info
+    const getAIInfo = (comment?: string) => {
+        if (!comment) return null;
+        // Example comments: 
+        // "Auto: Executed (AI: 0.85)" 
+        // "Auto: Skipped (AI: 0.65 < 0.75)"
+        // "Manual Signal"
+        
+        const aiMatch = comment.match(/AI:\s*(\d+\.?\d*)/);
+        if (aiMatch) {
+            const confidence = parseFloat(aiMatch[1]);
+            const isSkipped = comment.includes('Skipped');
+            return { confidence, isSkipped };
+        }
+        return null;
+    };
+
     return (
         <>
             {/* Toast Notification */}
@@ -102,9 +119,19 @@ export function SignalListener() {
                 <Toast
                     open={showToast}
                     onOpenChange={setShowToast}
-                    title={`新信号: ${toastSignal.symbol}`}
+                    title={
+                        <div className="flex items-center gap-2">
+                            <span>新信号: {toastSignal.symbol}</span>
+                            {toastSignal.comment?.includes('AI') && (
+                                <span className="px-1.5 py-0.5 rounded bg-purple-500/20 text-purple-400 text-[10px] border border-purple-500/30 flex items-center gap-1">
+                                    <Bot size={10} />
+                                    AI
+                                </span>
+                            )}
+                        </div>
+                    }
                     description={
-                        <div className="flex flex-col gap-1">
+                        <div className="flex flex-col gap-2">
                             <div className="flex items-center gap-2">
                                 <span className={`font-bold ${toastSignal.action === 'BUY' ? 'text-accent-success' : 'text-accent-danger'}`}>
                                     {toastSignal.action}
@@ -115,6 +142,26 @@ export function SignalListener() {
                                 <span>TP: {toastSignal.tp}</span>
                                 <span>SL: {toastSignal.sl}</span>
                             </div>
+                            {/* AI Insight */}
+                            {(() => {
+                                const aiInfo = getAIInfo(toastSignal.comment);
+                                if (aiInfo) {
+                                    return (
+                                        <div className={`text-xs px-2 py-1 rounded border flex items-center gap-2 mt-1 ${
+                                            aiInfo.isSkipped 
+                                                ? 'bg-red-500/10 border-red-500/20 text-red-400' 
+                                                : 'bg-green-500/10 border-green-500/20 text-green-400'
+                                        }`}>
+                                            <Bot size={12} />
+                                            <span>
+                                                {aiInfo.isSkipped ? 'AI 拦截' : 'AI 推荐'} 
+                                                (信心: {(aiInfo.confidence * 100).toFixed(0)}%)
+                                            </span>
+                                        </div>
+                                    );
+                                }
+                                return null;
+                            })()}
                         </div>
                     }
                     action={

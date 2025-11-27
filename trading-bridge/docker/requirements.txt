@@ -3,3 +3,10 @@ uvicorn
 pyzmq
 pydantic
 supabase
+pandas
+numpy
+lightgbm
+scikit-learn
+grpcio
+grpcio-tools
+protobuf

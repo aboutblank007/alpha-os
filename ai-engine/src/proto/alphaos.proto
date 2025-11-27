@@ -1,0 +1,73 @@
+syntax = "proto3";
+
+package alphaos;
+
+// The service definition
+service AlphaZero {
+  // Bidirectional stream: Server sends SignalRequest, Client sends SignalResponse
+  rpc StreamSignals (stream SignalResponse) returns (stream SignalRequest) {}
+  
+  // Unary call for simple ping/health check
+  rpc HealthCheck (Ping) returns (Pong) {}
+}
+
+message Ping {
+  string client_id = 1;
+  int64 timestamp = 2;
+}
+
+message Pong {
+  string server_id = 1;
+  int64 timestamp = 2;
+  bool ready = 3;
+}
+
+message SignalRequest {
+  string request_id = 1;
+  string symbol = 2;
+  string timeframe = 3;
+  
+  // Market Data
+  repeated Candle market_context = 4; // History candles for feature engineering
+  Quote tick_data = 5; // Real-time tick
+  
+  // Signal Info (if originating from an indicator)
+  string signal_source = 6; // e.g., "PivotTrendSignals"
+  string action = 7; // "BUY", "SELL"
+  double suggested_entry = 8;
+  double suggested_sl = 9;
+  double suggested_tp = 10;
+}
+
+message SignalResponse {
+  string request_id = 1; // Must match request_id
+  string client_id = 2;
+  
+  // Decision
+  bool should_execute = 3;
+  string action = 4; // "BUY", "SELL", "PASS"
+  double confidence = 5; // 0.0 - 1.0
+  
+  // Modified Trade Params (AI optimization)
+  double adjusted_sl = 6;
+  double adjusted_tp = 7;
+  double adjusted_volume = 8;
+  
+  string reason = 9; // Explainability
+}
+
+message Candle {
+  int64 time = 1;
+  double open = 2;
+  double high = 3;
+  double low = 4;
+  double close = 5;
+  double volume = 6;
+}
+
+message Quote {
+  int64 time = 1;
+  double bid = 2;
+  double ask = 3;
+}
+

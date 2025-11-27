@@ -28,7 +28,8 @@ services:
       dockerfile: docker/Dockerfile.api
     container_name: bridge-api
     ports:
-      - "8000:8000"
+      - "8000:8000" # HTTP API
+      - "50051:50051" # gRPC API
     environment:
       # API binds to 0.0.0.0 inside its container
       - ZMQ_BIND_ADDRESS=tcp://0.0.0.0:5555
@@ -39,6 +40,8 @@ services:
     volumes:
       # Mount the same shared volume for signals
       - signal_data:/app/signals
+      # Mount the proto directory so it's available for generation at runtime
+      - ../../src/proto:/app/src/proto
     networks:
       - trading-net
     restart: unless-stopped

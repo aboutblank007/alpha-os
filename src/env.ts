@@ -6,7 +6,8 @@ const envSchema = z.object({
     NEXT_PUBLIC_SUPABASE_ANON_KEY: z.string().min(1, "Supabase Anon Key is required"),
 
     // MT5 Trading Bridge
-    TRADING_BRIDGE_API_URL: z.string().url().optional().default('http://api.lootool.cn:8000'),
+    // Allow empty string to fallback to default, or use default if undefined
+    TRADING_BRIDGE_API_URL: z.string().url().optional().or(z.literal('')).transform(val => val || 'http://api.lootool.cn:8000'),
 });
 
 const processEnv = {

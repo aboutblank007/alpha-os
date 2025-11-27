@@ -3,7 +3,7 @@ import React, { useEffect } from "react";
 import { X } from "lucide-react";
 import { cn } from "@/lib/utils";
 
-type ToastItem = { id: number; title?: string; description?: React.ReactNode; action?: React.ReactNode; duration?: number };
+type ToastItem = { id: number; title?: React.ReactNode; description?: React.ReactNode; action?: React.ReactNode; duration?: number };
 
 const ToastContext = React.createContext<{
   toasts: ToastItem[];
@@ -53,7 +53,7 @@ export function useToast() {
 interface ToastProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
-  title: string;
+  title: React.ReactNode;
   description?: React.ReactNode;
   action?: React.ReactNode;
   duration?: number;
