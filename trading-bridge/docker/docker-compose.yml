@@ -3,12 +3,12 @@ version: '3.8'
 services:
   mt5:
     image: gmag11/metatrader5_vnc:latest
+    platform: linux/amd64
     container_name: mt5-vnc
     ports:
       - "3000:3000" # Web VNC
       - "8001:8001" # VNC WebSocket (if needed)
     environment:
-      - CUSTOM_USER=alphaos
       - PASSWORD=trading
     volumes:
       - mt5_config:/config

@@ -87,7 +87,7 @@
 *核心目标: 构建混合算力架构，实现实时 AI 推理。*
 
 *   **核心架构升级**
-    *   **gRPC 双向流**: 引入 `gRPC` 协议，实现了云端 Bridge 与本地 M2 Pro 之间的毫秒级实时通讯。
+    *   **gRPC 双向流**: 引入 `gRPC` 协议，实现了云端 Bridge 与本地 M2 Pro 之间的毫秒级双向实时通讯。
     *   **Proto 契约**: 定义 `SignalRequest` 和 `SignalResponse` 消息格式，规范数据传输。
     *   **服务端 (Cloud)**: Bridge API 集成 gRPC Server，负责路由 MT5 信号到本地 AI 引擎。
     *   **客户端 (Local)**: 开发 `ai-engine` 客户端，运行在本地高性能环境，负责特征计算和模型推理。
@@ -196,16 +196,16 @@ volumes:
 docker exec mt5-vnc chmod 777 "/config/.wine/drive_c/Program Files/MetaTrader 5/MQL5/Files/AlphaOS/Signals/"
 ```
 
-## 6. 遇到的问题与解决方案
+## 6. 遇到的问题与解决方案 (Troubleshooting Log)
 
 | 问题分类 | 问题描述 | 解决方案 |
 | :--- | :--- | :--- |
 | **架构限制** | 用户无 TradingView 会员，无法使用 Webhook 推送信号。 | **方案转型**: 开发 MQL5 原生指标，配合 Python 文件监听器，实现本地信号闭环。 |
 | **Docker 卷共享** | MT5 和 Bridge 容器无法共享信号文件。 | **共享卷配置**: 创建 `signal_data` 卷，分别挂载到两个容器的对应目录。 |
+| **MT5 回测数据采集** | 运行回测时图表不显示指标，输出目录为空。 | **模式修正**: 必须将采集器 (`PivotTrend_DataCollector.mq5`) 作为 **Expert Advisor** 而非 Indicator 运行；**关闭优化 (Optimization: Disabled)** 以防止文件写入临时目录；逻辑改为 **Signal-First** (信号即写，平仓追加)，防止数据丢失。 |
+| **数据导出** | 无法从 Docker 容器内批量提取分散的 JSON 训练数据。 | **ETL 流程**: 编写 `tar` 命令打包容器内 `Tester/Agent` 目录数据，配合 `export_training_data.py` 脚本自动清洗并合并为 CSV 格式。 |
 | **文件权限** | MT5 进程 (abc 用户) 无法写入 root 拥有的目录。 | **权限修复**: `chmod 777` 信号目录，确保 MT5 可写入。 |
-| **移动端交互** | 拖拽排序与页面滚动冲突，操作不流畅。 | **交互重构**: 移动端禁用拖拽，采用固定堆叠布局；开发“专注模式”提供纯粹体验。 |
-| **图表渲染** | 移动端缩放时指标变形，连线混乱。 | **逻辑修正**: 移除 `fitContent` 强制缩放；在指标渲染器中增加无效点检测，断开重绘路径。 |
-| **性能优化** | 图表拖动时本地运行卡顿。 | **事件优化**: 移除冗余的 `updateLabels` 频繁调用，优化 ResizeObserver 回调。 |
+| **MT5 安装失败** | `c0000135` 错误或 `rosetta error` (Mac M1/M2)。 | **平台兼容性**: 放弃 Docker 内运行 MT5 (x86 Wine 兼容性差)，改为 **宿主机原生运行 MT5 + 本地 Python Bridge** 方案，极其稳定。 |
 | **AI 架构** | 低内存云服务器无法运行 LLM/LightGBM 推理。 | **分布式改造**: 采用 gRPC 架构，将推理卸载到本地 M2 Pro，云端仅做转发。 |
 | **数据库Schema** | 表结构分散，缺少版本控制，导致部署不一致。 | **统一管理**: 整合为 `FULL_SCHEMA_V2.sql`，作为单一真理来源。 |
 
@@ -217,7 +217,8 @@ docker exec mt5-vnc chmod 777 "/config/.wine/drive_c/Program Files/MetaTrader 5/
 | `ai-engine/src/features.py` | **New** 剥头皮专用特征工程 (DOM/Tech/Time) |
 | `ai-engine/src/train.py` | **New** LightGBM 训练管线 (Triple Barrier Labeling) |
 | `ai-engine/models/` | **New** 模型存储目录 |
-| `trading-bridge/mql5/PivotTrend_DataCollector.mq5` | **New** 回测专用数据采集指标 |
+| `trading-bridge/mql5/PivotTrend_DataCollector.mq5` | **New** 回测专用数据采集指标 (EA模式) |
+| `ai-engine/export_training_data.py` | **New** 训练数据导出工具 |
 | `src/db/data_collection.sql` | **New** 训练数据表 Schema 定义 |
 | `docs/DATA_COLLECTION_GUIDE.md` | **New** 数据采集操作指南 |
 
