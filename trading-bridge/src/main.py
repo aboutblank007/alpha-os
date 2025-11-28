@@ -8,8 +8,8 @@ import os
 from supabase import create_client, Client
 import json
 import glob
-from ml_engine import feature_engineer, predictor
 import pandas as pd
+from datetime import datetime, timezone
 
 # gRPC Imports
 from grpc_server import start_grpc_server, AlphaZeroService
@@ -261,6 +261,31 @@ class AutomationManager:
                         volume_real=float(a.get("volume_real", 0))
                     ))
 
+            # Populate Technical Context from Signal Data (if available)
+            tech_context = alphaos_pb2.TechnicalContext(
+                ema_short=float(signal_data.get("ema_short", 0)),
+                ema_long=float(signal_data.get("ema_long", 0)),
+                atr=float(signal_data.get("atr", 0)),
+                adx=float(signal_data.get("adx", 0)),
+                center=float(signal_data.get("center", 0)),
+                distance_ok=bool(signal_data.get("distance_ok")),
+                slope_ok=bool(signal_data.get("slope_ok")),
+                trend_filter_ok=bool(signal_data.get("trend_filter_ok")),
+                htf_trend_ok=bool(signal_data.get("htf_trend_ok")),
+                volatility_ok=bool(signal_data.get("volatility_ok")),
+                chop_ok=bool(signal_data.get("chop_ok")),
+                spread_ok=bool(signal_data.get("spread_ok")),
+                bars_since_last=int(signal_data.get("bars_since_last", 0)),
+                trend_direction=int(signal_data.get("trend_direction", 0)),
+                ema_cross_event=int(signal_data.get("ema_cross_event", 0)),
+                ema_spread=float(signal_data.get("ema_spread", 0)),
+                atr_percent=float(signal_data.get("atr_percent", 0)),
+                reclaim_state=int(signal_data.get("reclaim_state", 0)),
+                is_reclaim_signal=bool(signal_data.get("is_reclaim_signal")),
+                price_vs_center=float(signal_data.get("price_vs_center", 0)),
+                cloud_width=float(signal_data.get("cloud_width", 0))
+            )
+
             signal_req = alphaos_pb2.SignalRequest(
                 request_id=req_id,
                 symbol=symbol,
@@ -272,7 +297,8 @@ class AutomationManager:
                 action=signal_data.get("action", ""),
                 suggested_entry=float(signal_data.get("price", 0)),
                 suggested_sl=float(signal_data.get("sl", 0)),
-                suggested_tp=float(signal_data.get("tp", 0))
+                suggested_tp=float(signal_data.get("tp", 0)),
+                technical_context=tech_context
             )
             
             # Send to AI Engine
@@ -402,7 +428,55 @@ async def watch_signal_directory():
                     else:
                         print(f"Automation Skipped: {rule_or_msg}")
 
-                    # Insert into Supabase
+                    # Save extended features to training_signals table if available
+                    if supabase and "ema_short" in content:
+                        try:
+                            ts_val = content.get("timestamp", int(time.time()))
+                            dt_obj = datetime.fromtimestamp(ts_val, tz=timezone.utc)
+                            
+                            # Generate signal_id if not present
+                            signal_id = content.get("signal_id")
+                            if not signal_id:
+                                signal_id = f"{content.get('symbol')}_{ts_val}"
+
+                            training_data = {
+                                "signal_id": signal_id,
+                                "symbol": content.get("symbol"),
+                                "action": content.get("action"),
+                                "timestamp": dt_obj.isoformat(),
+                                "signal_price": content.get("price"),
+                                "sl": content.get("sl"),
+                                "tp": content.get("tp"),
+                                "ema_short": content.get("ema_short"),
+                                "ema_long": content.get("ema_long"),
+                                "atr": content.get("atr"),
+                                "adx": content.get("adx"),
+                                "center": content.get("center"),
+                                "distance_ok": bool(content.get("distance_ok")),
+                                "slope_ok": bool(content.get("slope_ok")),
+                                "trend_filter_ok": bool(content.get("trend_filter_ok")),
+                                "htf_trend_ok": bool(content.get("htf_trend_ok")),
+                                "volatility_ok": bool(content.get("volatility_ok")),
+                                "chop_ok": bool(content.get("chop_ok")),
+                                "spread_ok": bool(content.get("spread_ok")),
+                                "bars_since_last": content.get("bars_since_last"),
+                                "trend_direction": content.get("trend_direction"),
+                                "ema_cross_event": content.get("ema_cross_event"),
+                                "ema_spread": content.get("ema_spread"),
+                                "atr_percent": content.get("atr_percent"),
+                                "reclaim_state": content.get("reclaim_state"),
+                                "is_reclaim_signal": bool(content.get("is_reclaim_signal")),
+                                "price_vs_center": content.get("price_vs_center"),
+                                "cloud_width": content.get("cloud_width"),
+                                "executed": is_auto,
+                                "execution_time": datetime.now(timezone.utc).isoformat() if is_auto else None
+                            }
+                            supabase.table("training_signals").upsert(training_data, on_conflict="signal_id").execute()
+                            print("💾 Extended training features saved to DB")
+                        except Exception as e:
+                            print(f"⚠️ Failed to save training features: {e}")
+
+                    # Insert into Supabase (Legacy signals table)
                     if supabase:
                         try:
                             raw_action = content.get("action", "").upper()
@@ -538,6 +612,7 @@ async def report_trade(report: TradeReport):
             db_side = report.type.lower()
             
             if report.entry == "IN":
+                # 1. Sync to 'trades' table
                 existing = supabase.table("trades").select("id").eq("external_order_id", str(report.position_id)).execute()
                 if existing.data:
                     print(f"⚠️  Position {report.position_id} already exists")
@@ -558,7 +633,38 @@ async def report_trade(report: TradeReport):
                     supabase.table("trades").insert(data).execute()
                     print(f"✅ Trade OPEN synced (Position ID: {report.position_id})")
                 
+                # 2. Link execution details to 'training_signals'
+                # Try to find a matching recent signal
+                try:
+                    # Matching logic: Same Symbol, same Side, created recently (last 5 mins)
+                    # Note: This is heuristic. Better if we passed a signal_id through the trade comment, 
+                    # but MT5 trade execution logic often strips comments or we can't easily pass custom ID to MT5 TradeRequest.
+                    
+                    # For now, let's look for the latest signal for this symbol
+                    recent_signals = supabase.table("training_signals").select("signal_id") \
+                        .eq("symbol", report.symbol) \
+                        .eq("executed", True) \
+                        .order("timestamp", desc=True) \
+                        .limit(1) \
+                        .execute()
+                        
+                    if recent_signals.data:
+                        sig_id = recent_signals.data[0]['signal_id']
+                        
+                        update_data = {
+                            "order_id": str(report.ticket),
+                            "position_id": str(report.position_id),
+                            "execution_price": report.price,
+                            # execution_spread is tricky without tick data at moment of execution
+                            "broker_time": report.time 
+                        }
+                        supabase.table("training_signals").update(update_data).eq("signal_id", sig_id).execute()
+                        print(f"🔗 Linked execution {report.ticket} to signal {sig_id}")
+                except Exception as e:
+                    print(f"⚠️ Failed to link execution to training signal: {e}")
+
             elif report.entry == "OUT":
+                # 1. Update 'trades' table
                 target_trade = None
                 response = supabase.table("trades").select("*").eq("external_order_id", str(report.position_id)).eq("status", "open").execute()
                 if response.data:
@@ -573,10 +679,11 @@ async def report_trade(report: TradeReport):
                                  break
 
                 if target_trade:
+                    pnl_net = report.profit + report.commission + report.swap
                     update_data = {
                         "status": "closed",
                         "exit_price": report.price,
-                        "pnl_net": report.profit + report.commission + report.swap,
+                        "pnl_net": pnl_net,
                         "pnl_gross": report.profit,
                         "commission": (target_trade.get('commission', 0) or 0) + report.commission,
                         "swap": (target_trade.get('swap', 0) or 0) + report.swap,
@@ -586,6 +693,26 @@ async def report_trade(report: TradeReport):
                     }
                     supabase.table("trades").update(update_data).eq("id", target_trade['id']).execute()
                     print(f"✅ Trade CLOSED synced (ID: {target_trade['id']})")
+                
+                # 2. Update 'training_signals' with outcome
+                try:
+                    # Find signal by position_id
+                    training_sig = supabase.table("training_signals").select("signal_id").eq("position_id", str(report.position_id)).execute()
+                    if training_sig.data:
+                        sig_id = training_sig.data[0]['signal_id']
+                        
+                        outcome_data = {
+                            "exit_price": report.price,
+                            "exit_time": report.time,
+                            "result_profit": report.profit,
+                            "result_mae": report.mae,
+                            "result_mfe": report.mfe,
+                            "result_win": report.profit > 0
+                        }
+                        supabase.table("training_signals").update(outcome_data).eq("signal_id", sig_id).execute()
+                        print(f"🎯 Training signal {sig_id} outcome updated (PnL: {report.profit})")
+                except Exception as e:
+                    print(f"⚠️ Failed to update training signal outcome: {e}")
 
         except Exception as e:
             import traceback

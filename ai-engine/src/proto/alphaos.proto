@@ -31,12 +31,19 @@ message SignalRequest {
   repeated Candle market_context = 4; // History candles for feature engineering
   Quote tick_data = 5; // Real-time tick
   
+  // DOM Data (Optional)
+  repeated OrderBookLevel dom_bids = 12;
+  repeated OrderBookLevel dom_asks = 13;
+
   // Signal Info (if originating from an indicator)
   string signal_source = 6; // e.g., "PivotTrendSignals"
   string action = 7; // "BUY", "SELL"
   double suggested_entry = 8;
   double suggested_sl = 9;
   double suggested_tp = 10;
+
+  // Technical Context (Pre-calculated indicators)
+  TechnicalContext technical_context = 11;
 }
 
 message SignalResponse {
@@ -71,3 +78,37 @@ message Quote {
   double ask = 3;
 }
 
+message OrderBookLevel {
+  double price = 1;
+  double volume = 2;
+}
+
+message TechnicalContext {
+  double ema_short = 1;
+  double ema_long = 2;
+  double atr = 3;
+  double adx = 4;
+  double center = 5;
+  
+  // Flags
+  bool distance_ok = 6;
+  bool slope_ok = 7;
+  bool trend_filter_ok = 8;
+  bool htf_trend_ok = 9;
+  bool volatility_ok = 12;
+  bool chop_ok = 13;
+  bool spread_ok = 14;
+  
+  // Context
+  int32 bars_since_last = 10;
+  
+  // Extended Features
+  int32 trend_direction = 15;
+  int32 ema_cross_event = 16;
+  double ema_spread = 17;
+  double atr_percent = 18;
+  int32 reclaim_state = 19;
+  bool is_reclaim_signal = 20;
+  double price_vs_center = 21;
+  double cloud_width = 22;
+}

@@ -268,7 +268,6 @@ void SendHistoryData(string req_id, string symbol, ENUM_TIMEFRAMES tf, int count
         Print("Failed to copy rates for ", symbol);
     }
 }
-}
 
 //+------------------------------------------------------------------+
 //| Get DOM Data and Send                                            |

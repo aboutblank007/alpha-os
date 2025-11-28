@@ -9,6 +9,18 @@
 
 **最新更新 (2025-11-28)**: 正式完成 **Phase 5: 分布式 AI 架构 (Distributed AI Architecture)** 的实施。我们构建了 "本地 M2 Pro 推理 + 云端 Bridge 转发" 的混合架构，并成功实现了 **3种核心交易模式**（经典、指标+AI、AI DOM），特别是引入了 **市场深度 (DOM)** 数据作为 AI 决策的关键维度。
 
+### Phase 5.2: 剥头皮 AI 引擎 (Scalping AI Engine)
+*核心目标: 针对超短线交易构建专用的高频特征工程与模型训练管线。*
+
+*   **LightGBM 特征工程**:
+    *   **微观结构**: 实现了 **OFI (Order Flow Imbalance)** 和 **Depth Ratio**，利用 DOM 数据捕捉瞬时买卖压力（主要决策依据）。
+    *   **时段波动性**: 自动识别 Asian/London/NY 交易时段，捕捉特定市场的波动特征。
+    *   **多维特征融合**: 将 EMA/RSI/MACD 等技术指标作为**市场状态上下文 (Context)** 输入 AI，辅助模型判断微观订单流信号的有效性，而非单一的硬性过滤。
+
+*   **智能标签系统 (Triple Barrier)**:
+    *   针对剥头皮策略定制了严格的标签逻辑：**TP 0.1% / SL 0.08%**，时间窗口 **5根K线**。
+    *   模型输出不仅包含置信度，还自动计算 **动态止盈止损位**。
+
 ## 2. 已完成实施内容
 
 ### Phase 1: 坚实基础 (Foundation & Reliability)
@@ -95,7 +107,7 @@
 
 *   **3种交易模式**:
     1.  **经典模式 (Legacy)**: 纯指标驱动，信号直接执行，适合趋势明确的行情。
-    2.  **指标 + AI 过滤 (Indicator + AI)**: 指标生成信号，AI 基于 K 线历史 (Price Action) 进行二次确认，过滤假突破。
+    2.  **前端自动化：自动 + AI 过滤 (Indicator + AI)**: 指标生成信号，AI 基于 K 线历史 (Price Action) 进行二次确认，过滤假突破。此模式通过前端"自动化规则"配置，实现自动跟单。
     3.  **AI (DOM) 模式**: 在 K 线数据基础上，引入 **Level 2 市场深度 (DOM)** 数据（买卖盘口分布、挂单量），捕捉微观流动性变化。
 
 *   **全链路 DOM 支持**:
@@ -199,6 +211,16 @@ docker exec mt5-vnc chmod 777 "/config/.wine/drive_c/Program Files/MetaTrader 5/
 
 ## 7. 文件清单
 
+### Phase 5.2 新增文件 (Scalping AI)
+| 文件路径 | 说明 |
+|----------|------|
+| `ai-engine/src/features.py` | **New** 剥头皮专用特征工程 (DOM/Tech/Time) |
+| `ai-engine/src/train.py` | **New** LightGBM 训练管线 (Triple Barrier Labeling) |
+| `ai-engine/models/` | **New** 模型存储目录 |
+| `trading-bridge/mql5/PivotTrend_DataCollector.mq5` | **New** 回测专用数据采集指标 |
+| `src/db/data_collection.sql` | **New** 训练数据表 Schema 定义 |
+| `docs/DATA_COLLECTION_GUIDE.md` | **New** 数据采集操作指南 |
+
 ### Phase 5 新增文件 (Distributed AI)
 | 文件路径 | 说明 |
 |----------|------|
@@ -260,7 +282,7 @@ docker exec mt5-vnc chmod 777 "/config/.wine/drive_c/Program Files/MetaTrader 5/
 *   **特征工程扩展**:
     *   **订单流不平衡 (OFI)**: 基于 DOM 数据计算买卖压力差。
     *   **微观结构特征**: 盘口厚度、大单挂单位置、成交速率。
-*   **多模型融合**: 针对不同品种（如黄金 vs 外汇）训练专用模型，或采用 Ensemble Learning 提升鲁棒性。
+    *   **多模型融合**: 针对不同品种（如黄金 vs 外汇）训练专用模型，或采用 Ensemble Learning 提升鲁棒性。
 
 ### 9.2 性能与延迟优化
 *   **通信协议升级**: 目前 Bridge 与 MT5 采用 HTTP 轮询 (Polling)，延迟在 500ms-1s。计划升级为 **ZeroMQ** 或 **Named Pipes**，实现毫秒级双向推送。

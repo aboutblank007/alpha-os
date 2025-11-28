@@ -6,17 +6,16 @@ import sys
 import pandas as pd
 import numpy as np
 import time
+import lightgbm as lgb
 
-# Adjust path to import generated proto
+# Adjust path to import generated proto and features
 sys.path.append(os.path.join(os.path.dirname(__file__), '.'))
 
 import alphaos_pb2
 import alphaos_pb2_grpc
+from features import FeatureEngineer
 
 # Configure Logging
-# os.environ['GRPC_VERBOSITY'] = 'DEBUG'
-# os.environ['GRPC_TRACE'] = 'connectivity_state,http'
-
 logging.basicConfig(
     level=logging.INFO,
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
@@ -27,12 +26,30 @@ logger = logging.getLogger("AI-Engine")
 # Default to remote IP if not set
 DEFAULT_REMOTE_IP = "49.235.153.73:50051" 
 CLOUD_BRIDGE_URL = os.environ.get("CLOUD_BRIDGE_URL", DEFAULT_REMOTE_IP)
+MODEL_PATH = "ai-engine/models/lgbm_scalping_v1.txt"
+
+# Scalping Rules
+TP_PCT = 0.001   # 0.1%
+SL_PCT = 0.0008  # 0.08%
 
 class LocalAIEngine:
     def __init__(self):
         self.channel = None
         self.stub = None
         self.is_connected = False
+        self.fe = FeatureEngineer()
+        self.model = None
+        self.load_model()
+
+    def load_model(self):
+        if os.path.exists(MODEL_PATH):
+            try:
+                self.model = lgb.Booster(model_file=MODEL_PATH)
+                logger.info(f"✅ Loaded LightGBM model from {MODEL_PATH}")
+            except Exception as e:
+                logger.error(f"❌ Failed to load model: {e}")
+        else:
+            logger.warning(f"⚠️ Model file {MODEL_PATH} not found. Will run in dummy mode.")
 
     async def connect(self):
         """Establish connection to Cloud Bridge"""
@@ -40,8 +57,7 @@ class LocalAIEngine:
         self.channel = grpc.aio.insecure_channel(CLOUD_BRIDGE_URL)
         self.stub = alphaos_pb2_grpc.AlphaZeroStub(self.channel)
         self.is_connected = True
-        # Note: insecure_channel is non-blocking by default, actual connection check happens on first call
-        # But we can wait for ready
+        
         try:
              await asyncio.wait_for(self.channel.channel_ready(), timeout=10.0)
              logger.info("✅ Connected to Cloud Bridge.")
@@ -55,21 +71,15 @@ class LocalAIEngine:
         
         while True:
             try:
-                # Start the bi-directional stream
-                # We use an iterator to send responses
                 response_queue = asyncio.Queue()
                 
                 async def request_generator():
-                    # Send an initial ping or empty response to establish stream presence if needed
-                    # But our proto StreamSignals expects SignalResponse.
-                    # We can send a dummy one or just wait.
                     while True:
                         response = await response_queue.get()
                         yield response
 
                 logger.info("🎧 Waiting for signals...")
                 
-                # This iterator will block until a message comes from server
                 async for signal_request in self.stub.StreamSignals(request_generator()):
                     logger.info(f"📥 Received Signal: {signal_request.symbol} {signal_request.action}")
                     
@@ -78,17 +88,15 @@ class LocalAIEngine:
                     
                     # Send response back
                     await response_queue.put(response)
-                    logger.info(f"📤 Sent Response: {response.should_execute}")
+                    logger.info(f"📤 Sent Response: {response.should_execute} (Conf: {response.confidence:.2f})")
             
             except grpc.RpcError as e:
-                # Check status code
                 if e.code() == grpc.StatusCode.UNAVAILABLE:
                     logger.error(f"❌ Cloud Bridge Unavailable (Connection Refused). Retrying in 5s...")
                 else:
                     logger.error(f"gRPC Error: {e}")
                 
                 await asyncio.sleep(5)
-                # Re-create channel on hard failures
                 await self.connect()
                 
             except Exception as e:
@@ -114,62 +122,65 @@ class LocalAIEngine:
             })
         df = pd.DataFrame(data)
         
-        # 1.5 Extract DOM Data
+        # 2. Feature Engineering
+        # Extract DOM data if available
         dom_bids = request.dom_bids
         dom_asks = request.dom_asks
-        if dom_bids:
-            logger.info(f"📊 Received DOM Data: {len(dom_bids)} Bids, {len(dom_asks)} Asks")
-            if len(dom_bids) > 0:
-                logger.info(f"   Top Bid: {dom_bids[0].price} ({dom_bids[0].volume})")
-            if len(dom_asks) > 0:
-                logger.info(f"   Top Ask: {dom_asks[0].price} ({dom_asks[0].volume})")
+        
+        features = self.fe.get_latest_features(df, dom_bids, dom_asks)
+        
+        # 3. Inference
+        confidence = 0.0
+        if self.model and features:
+            # Ensure feature order matches model expectation (simple dict -> list conversion)
+            # LightGBM Booster.predict usually wants 2D array.
+            # We need to align keys with model feature names.
+            # For now, passing values assuming dict-based prediction support or conversion.
+            # Note: Booster.predict needs raw data list in correct order.
+            model_features = self.model.feature_name()
+            feature_vector = []
+            for name in model_features:
+                feature_vector.append(features.get(name, 0.0))
+            
+            try:
+                # predict returns list of probs
+                confidence = self.model.predict([feature_vector])[0]
+            except Exception as e:
+                logger.error(f"Inference failed: {e}")
+                confidence = 0.5
         else:
-            logger.info("ℹ️ No DOM Data received")
-        
-        # 2. Feature Engineering (Simplified Port)
-        features = self.calculate_features(df)
-        
-        # 3. Inference (Mock for now)
-        # In real implementation, load LightGBM model here
-        confidence = self.predict_dummy(features)
-        
+            # Dummy fallback
+            rsi = features.get('rsi', 50)
+            confidence = 0.8 if (rsi < 30 and request.action == 'BUY') or (rsi > 70 and request.action == 'SELL') else 0.4
+
         should_execute = confidence > 0.6
         
+        # 4. Adjust Trade Params for Scalping
+        # Calculate price levels based on scalping rules (0.1% TP, 0.08% SL)
+        current_price = features.get('close', 0)
+        adjusted_tp = 0.0
+        adjusted_sl = 0.0
+        
+        if current_price > 0:
+            if request.action == 'BUY':
+                adjusted_tp = current_price * (1 + TP_PCT)
+                adjusted_sl = current_price * (1 - SL_PCT)
+            elif request.action == 'SELL':
+                adjusted_tp = current_price * (1 - TP_PCT)
+                adjusted_sl = current_price * (1 + SL_PCT)
+        
         latency_ms = (time.time() - start_time) * 1000
-        logger.info(f"🧠 Inference done in {latency_ms:.2f}ms | Conf: {confidence:.2f}")
         
         return alphaos_pb2.SignalResponse(
             request_id=request.request_id,
-            client_id="local-m2-pro",
+            client_id="local-m2-pro-scalper",
             should_execute=should_execute,
             action=request.action,
             confidence=confidence,
-            reason=f"Local AI Decision (Latency: {latency_ms:.2f}ms)"
+            adjusted_sl=adjusted_sl,
+            adjusted_tp=adjusted_tp,
+            reason=f"Scalping Model v1 (Latency: {latency_ms:.2f}ms)"
         )
-
-    def calculate_features(self, df: pd.DataFrame):
-        if df.empty: return {}
-        
-        # Simple RSI
-        delta = df['close'].diff()
-        gain = (delta.where(delta > 0, 0)).rolling(window=14).mean()
-        loss = (-delta.where(delta < 0, 0)).rolling(window=14).mean()
-        rs = gain / loss
-        df['rsi'] = 100 - (100 / (1 + rs))
-        
-        latest = df.iloc[-1]
-        return {
-            "rsi": latest.get('rsi', 50),
-            "close": latest['close']
-        }
-
-    def predict_dummy(self, features):
-        # Mock logic
-        rsi = features.get('rsi', 50)
-        # Trend Following Logic for test
-        if rsi > 70: return 0.2 # Overbought, don't buy
-        if rsi < 30: return 0.8 # Oversold, buy
-        return 0.65 # Neutral
 
 if __name__ == "__main__":
     engine = LocalAIEngine()
