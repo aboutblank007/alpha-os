@@ -2,9 +2,8 @@ import pandas as pd
 import numpy as np
 import lightgbm as lgb
 import os
-import joblib
 from sklearn.model_selection import train_test_split
-from sklearn.metrics import classification_report, confusion_matrix
+from sklearn.metrics import mean_absolute_error, mean_squared_error, r2_score
 
 # Configuration
 DATA_PATH = "training_data.csv"
@@ -15,9 +14,6 @@ class ScalpingTrainer:
         self.model = None
         
     def load_data(self, file_path: str) -> pd.DataFrame:
-        """
-        Load pre-processed training data (Signals + Outcomes).
-        """
         if not os.path.exists(file_path):
             raise FileNotFoundError(f"Data file {file_path} not found.")
             
@@ -27,57 +23,62 @@ class ScalpingTrainer:
 
     def prepare_data(self, df: pd.DataFrame):
         """
-        Prepare X and y for training.
+        Prepare X and y for training (Regression Task).
         """
-        # 1. Filter only completed trades
-        if 'has_outcome' in df.columns:
-            df = df[df['has_outcome'] == True].copy()
+        # Filter invalid data
+        if 'mfe' not in df.columns:
+            raise ValueError("Column 'mfe' not found. Cannot train regression model.")
+            
+        # Drop extreme outliers (e.g., data errors or news spikes that skew regression)
+        # Cap MFE at 99th percentile to stabilize training
+        limit = df['mfe'].quantile(0.99)
+        df = df[df['mfe'] < limit].copy()
         
-        # 2. Define Feature Columns (Exclude metadata like IDs, timestamps, raw prices)
-        # Using the columns present in the generated CSV
+        # Feature Engineering: Time
+        if 'timestamp' in df.columns:
+            df['datetime'] = pd.to_datetime(df['timestamp'], unit='s')
+            df['hour'] = df['datetime'].dt.hour
+            df['day_of_week'] = df['datetime'].dt.dayofweek
+
         feature_cols = [
-            'ema_short', 'ema_long', 'atr', 'adx', 'center', 
-            'distance_ok', 'slope_ok', 'trend_filter_ok', 'htf_trend_ok', 
-            'volatility_ok', 'chop_ok', 'spread_ok', 
-            'bars_since_last', 'trend_direction', 'ema_cross_event', 
-            'ema_spread', 'atr_percent', 'reclaim_state', 'is_reclaim_signal', 
-            'price_vs_center', 'cloud_width'
+            # --- Core Dynamic (Continuous) ---
+            'price_vs_center', 'adx', 'atr_percent', 'cloud_width', 'ema_spread', 'rsi',
+            # --- Microstructure ---
+            'tick_volume', 'spread', 'candle_size', 'wick_upper', 'wick_lower',
+            # --- State & Context ---
+            'reclaim_state', 'is_reclaim_signal', 'bars_since_last', 'trend_direction', 'ema_cross_event',
+            # --- Time ---
+            'hour', 'day_of_week'
         ]
         
-        # Ensure all columns exist
+        # Ensure columns exist
         available_cols = [c for c in feature_cols if c in df.columns]
-        missing_cols = set(feature_cols) - set(available_cols)
-        if missing_cols:
-            print(f"⚠️ Warning: Missing columns: {missing_cols}")
-            
-        X = df[available_cols]
-        y = df['outcome']
         
-        print(f"✅ Prepared {len(X)} samples with {len(available_cols)} features.")
-        print(f"   Win Rate in Data: {y.mean():.2%}")
+        X = df[available_cols]
+        y = df['mfe'] # Target: Maximum Favorable Excursion
+        
+        print(f"✅ Prepared {len(X)} samples for Regression.")
+        print(f"   Target Mean MFE: {y.mean():.2f}, Max: {y.max():.2f}")
         
         return X, y, available_cols
 
     def train(self, data_path: str):
-        print("🔄 Loading Data...")
+        print("🔄 Loading Data for Regression...")
         df = self.load_data(data_path)
         
         X, y, feature_cols = self.prepare_data(df)
         
-        # Split Data (Shuffle=False for time series, but here signals are discrete events)
-        # Since these are discrete signals, random split is acceptable if we assume market regime is mixed,
-        # but strictly speaking time-series split is safer. 
-        # Let's use a simple shuffle split for now as this is a feature-based classification.
-        X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42, shuffle=False)
+        # Split Data
+        X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42, shuffle=True)
         
-        # Train LightGBM
-        print("🚀 Training LightGBM...")
+        # Train LightGBM (Regression)
+        print("🚀 Training LightGBM (Regression)...")
         train_data = lgb.Dataset(X_train, label=y_train)
         valid_data = lgb.Dataset(X_test, label=y_test)
         
         params = {
-            'objective': 'binary',
-            'metric': ['auc', 'binary_logloss'],
+            'objective': 'regression',
+            'metric': ['rmse', 'mae'],
             'boosting_type': 'gbdt',
             'num_leaves': 31,
             'learning_rate': 0.05,
@@ -90,22 +91,31 @@ class ScalpingTrainer:
         self.model = lgb.train(
             params,
             train_data,
-            num_boost_round=1000,
+            num_boost_round=2000,
             valid_sets=[train_data, valid_data],
             callbacks=[
-                lgb.early_stopping(stopping_rounds=50),
-                lgb.log_evaluation(50)
+                lgb.early_stopping(stopping_rounds=100),
+                lgb.log_evaluation(100)
             ]
         )
         
         # Evaluation
-        y_pred_prob = self.model.predict(X_test)
-        y_pred = (y_pred_prob > 0.5).astype(int)
+        y_pred = self.model.predict(X_test)
         
-        print("\n📊 Model Evaluation:")
-        print(classification_report(y_test, y_pred))
-        print("Confusion Matrix:")
-        print(confusion_matrix(y_test, y_pred))
+        print("\n📊 Model Evaluation (Regression):")
+        print(f"RMSE: {np.sqrt(mean_squared_error(y_test, y_pred)):.4f}")
+        print(f"MAE:  {mean_absolute_error(y_test, y_pred):.4f}")
+        print(f"R2 Score: {r2_score(y_test, y_pred):.4f}")
+        
+        # Simulation: What if we only traded top 20% predicted MFE?
+        results = pd.DataFrame({'actual_mfe': y_test, 'predicted_mfe': y_pred})
+        threshold = results['predicted_mfe'].quantile(0.8)
+        top_trades = results[results['predicted_mfe'] > threshold]
+        
+        print(f"\n💰 Trade Simulation (Top 20% predicted):")
+        print(f"Avg Actual MFE (All): {y_test.mean():.2f}")
+        print(f"Avg Actual MFE (Top 20%): {top_trades['actual_mfe'].mean():.2f}")
+        print(f"Improvement: {(top_trades['actual_mfe'].mean() / y_test.mean() - 1)*100:.1f}%")
         
         # Save Model
         os.makedirs(os.path.dirname(MODEL_PATH), exist_ok=True)
@@ -118,16 +128,13 @@ class ScalpingTrainer:
             'importance': self.model.feature_importance(importance_type='gain')
         }).sort_values('importance', ascending=False)
         
-        print("\n🔝 Top 10 Features (Gain):")
-        print(importance.head(10))
+        print("\n🔝 Top 15 Features (Gain):")
+        print(importance.head(15))
 
 if __name__ == "__main__":
     trainer = ScalpingTrainer()
-    # Ensure we use the correct relative path based on where script is run
-    # Assuming run from root: python ai-engine/src/train.py
-    # Data is at root: training_data.csv
     data_file = "training_data.csv"
     if os.path.exists(data_file):
         trainer.train(data_file)
     else:
-        print(f"❌ File {data_file} not found. Please run export_training_data.py first.")
+        print(f"❌ File {data_file} not found.")

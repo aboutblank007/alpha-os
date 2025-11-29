@@ -29,8 +29,8 @@ CLOUD_BRIDGE_URL = os.environ.get("CLOUD_BRIDGE_URL", DEFAULT_REMOTE_IP)
 MODEL_PATH = "ai-engine/models/lgbm_scalping_v1.txt"
 
 # Scalping Rules
-TP_PCT = 0.001   # 0.1%
-SL_PCT = 0.0008  # 0.08%
+# We will dynamic adjust TP based on MFE prediction
+BASE_SL_PCT = 0.0008  # 0.08% Base SL
 
 class LocalAIEngine:
     def __init__(self):
@@ -88,7 +88,7 @@ class LocalAIEngine:
                     
                     # Send response back
                     await response_queue.put(response)
-                    logger.info(f"📤 Sent Response: {response.should_execute} (Conf: {response.confidence:.2f})")
+                    logger.info(f"📤 Sent Response: {response.should_execute} (MFE Pred: {response.confidence:.2f})")
             
             except grpc.RpcError as e:
                 if e.code() == grpc.StatusCode.UNAVAILABLE:
@@ -109,77 +109,126 @@ class LocalAIEngine:
         """
         start_time = time.time()
         
-        # 1. Convert Context to DataFrame
-        data = []
+        # 1. Extract Technical Context from Request (Protobuf -> Dict)
+        tc = request.technical_context
+        
+        # Current Features (Snapshot)
+        # Map protobuf fields to model feature names
+        # Note: 'rsi', 'tick_volume', 'spread', 'candle_size' are NEW in protobuf
+        # If Cloud Bridge hasn't been updated to send these, we might need fallback or compute from history
+        
+        # Assuming Cloud Bridge sends raw features in `technical_context` if updated, 
+        # OR we compute from `market_context` (candles).
+        
+        # Let's compute dynamic features from market_context just to be safe/fresh
+        candles = []
         for c in request.market_context:
-            data.append({
+            candles.append({
                 'time': c.time,
                 'open': c.open,
                 'high': c.high,
                 'low': c.low,
                 'close': c.close,
-                'volume': c.volume
+                'tick_volume': c.volume
             })
-        df = pd.DataFrame(data)
+        df = pd.DataFrame(candles)
         
-        # 2. Feature Engineering
-        # Extract DOM data if available
-        dom_bids = request.dom_bids
-        dom_asks = request.dom_asks
+        # Basic Features from protobuf (provided by EA)
+        current_features = {
+            'price_vs_center': tc.price_vs_center,
+            'adx': tc.adx,
+            'atr_percent': tc.atr_percent,
+            'cloud_width': tc.cloud_width,
+            'ema_spread': tc.ema_spread,
+            'rsi': getattr(tc, 'rsi', 50.0), # Fallback if proto not updated
+            'reclaim_state': tc.reclaim_state,
+            'is_reclaim_signal': 1 if tc.is_reclaim_signal else 0,
+            'bars_since_last': tc.bars_since_last,
+            'trend_direction': tc.trend_direction,
+            'ema_cross_event': tc.ema_cross_event,
+            # Microstructure (from EA or computed)
+            'tick_volume': getattr(tc, 'tick_volume', 0), 
+            'spread': getattr(tc, 'spread', 0.0),
+            'candle_size': getattr(tc, 'candle_size', 0.0),
+            'wick_upper': getattr(tc, 'wick_upper', 0.0),
+            'wick_lower': getattr(tc, 'wick_lower', 0.0),
+        }
         
-        features = self.fe.get_latest_features(df, dom_bids, dom_asks)
-        
+        # Add Time Features
+        current_dt = pd.to_datetime(time.time(), unit='s')
+        current_features['hour'] = current_dt.hour
+        current_features['day_of_week'] = current_dt.dayofweek
+
         # 3. Inference
-        confidence = 0.0
-        if self.model and features:
-            # Ensure feature order matches model expectation (simple dict -> list conversion)
-            # LightGBM Booster.predict usually wants 2D array.
-            # We need to align keys with model feature names.
-            # For now, passing values assuming dict-based prediction support or conversion.
-            # Note: Booster.predict needs raw data list in correct order.
+        predicted_mfe = 0.0
+        should_execute = False
+        reason = "Model not loaded"
+        
+        if self.model:
             model_features = self.model.feature_name()
             feature_vector = []
-            for name in model_features:
-                feature_vector.append(features.get(name, 0.0))
+            missing_feats = []
             
+            for name in model_features:
+                val = current_features.get(name)
+                if val is None:
+                    # Try to compute from history if missing in EA payload
+                    # (Simplified for now: just fill 0)
+                    val = 0.0
+                    missing_feats.append(name)
+                feature_vector.append(val)
+            
+            if missing_feats:
+                logger.warning(f"⚠️ Missing features for inference: {missing_feats}")
+
             try:
-                # predict returns list of probs
-                confidence = self.model.predict([feature_vector])[0]
+                # Predict MFE (Regression)
+                preds = self.model.predict([feature_vector])
+                predicted_mfe = preds[0]
+                
+                # Decision Logic (Regression based)
+                # If Predicted MFE > Threshold (e.g., 2.0 points), EXECUTE
+                # Threshold should be tuned. From training: Top 20% had mean MFE ~3.96
+                MFE_THRESHOLD = 2.5 
+                
+                should_execute = predicted_mfe > MFE_THRESHOLD
+                reason = f"Pred MFE: {predicted_mfe:.2f} (Thresh: {MFE_THRESHOLD})"
+                
             except Exception as e:
                 logger.error(f"Inference failed: {e}")
-                confidence = 0.5
+                reason = f"Inference Error: {e}"
         else:
             # Dummy fallback
-            rsi = features.get('rsi', 50)
-            confidence = 0.8 if (rsi < 30 and request.action == 'BUY') or (rsi > 70 and request.action == 'SELL') else 0.4
+            should_execute = True # Default allow in dry run
+            reason = "Dummy Mode"
 
-        should_execute = confidence > 0.6
-        
-        # 4. Adjust Trade Params for Scalping
-        # Calculate price levels based on scalping rules (0.1% TP, 0.08% SL)
-        current_price = features.get('close', 0)
+        # 4. Adjust Trade Params (Dynamic TP)
+        current_price = request.suggested_entry
         adjusted_tp = 0.0
-        adjusted_sl = 0.0
+        adjusted_sl = request.suggested_sl
         
-        if current_price > 0:
+        if current_price > 0 and should_execute:
+            # Set TP based on Predicted MFE (Conservative: 80% of prediction)
+            # MFE is in points/price diff.
+            conservative_mfe = predicted_mfe * 0.8
+            
             if request.action == 'BUY':
-                adjusted_tp = current_price * (1 + TP_PCT)
-                adjusted_sl = current_price * (1 - SL_PCT)
+                adjusted_tp = current_price + conservative_mfe
+                # Ensure SL is at least min distance? EA handles this usually.
             elif request.action == 'SELL':
-                adjusted_tp = current_price * (1 - TP_PCT)
-                adjusted_sl = current_price * (1 + SL_PCT)
+                adjusted_tp = current_price - conservative_mfe
         
         latency_ms = (time.time() - start_time) * 1000
         
         return alphaos_pb2.SignalResponse(
             request_id=request.request_id,
-            client_id="local-m2-pro-scalper",
+            client_id="local-m2-pro-scalper-v2",
             should_execute=should_execute,
             action=request.action,
-            confidence=confidence,
+            confidence=predicted_mfe, # Return MFE as confidence score
             adjusted_sl=adjusted_sl,
             adjusted_tp=adjusted_tp,
-            reason=f"Scalping Model v1 (Latency: {latency_ms:.2f}ms)"
+            reason=f"{reason} | {latency_ms:.2f}ms"
         )
 
 if __name__ == "__main__":

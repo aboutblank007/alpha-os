@@ -1,0 +1,7 @@
+Total Trades: 31205
+Win Rate: 32.79%
+Total PnL (Points): -606.53
+Average Win: 3.71
+Average Loss: -1.84
+Profit Factor: 0.98
+Max Drawdown: -1752.84
