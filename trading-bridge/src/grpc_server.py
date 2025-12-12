@@ -57,15 +57,22 @@ class AlphaZeroService(alphaos_pb2_grpc.AlphaZeroServicer):
         try:
             async for response in request_iterator:
                 req_id = response.request_id
+                
+                # Ignore handshake responses (they're just keepalive pings)
+                if req_id == "HANDSHAKE":
+                    logger.debug(f"Received HANDSHAKE from {client_id}")
+                    continue
+                    
                 if req_id in self.responses:
                     if not self.responses[req_id].done():
                         self.responses[req_id].set_result(response)
+                        logger.debug(f"✅ Matched response for request {req_id}")
                 else:
-                    logger.warning(f"Received response for unknown request {req_id}")
+                    logger.warning(f"Received response for unknown/expired request {req_id}")
         except Exception as e:
             logger.error(f"Error reading stream from {client_id}: {e}")
 
-    async def send_signal_and_wait(self, signal_request: alphaos_pb2.SignalRequest, timeout=5.0) -> alphaos_pb2.SignalResponse:
+    async def send_signal_and_wait(self, signal_request: alphaos_pb2.SignalRequest, timeout=15.0) -> alphaos_pb2.SignalResponse:
         """
         Sends a request to the first available client and waits for response.
         """
@@ -98,7 +105,16 @@ class AlphaZeroService(alphaos_pb2_grpc.AlphaZeroServicer):
                 del self.responses[req_id]
 
 async def start_grpc_server(service: AlphaZeroService, port=50051):
-    server = grpc.aio.server()
+    server = grpc.aio.server(
+        options=[
+            ('grpc.keepalive_time_ms', 300000), # 5 mins (match client)
+            ('grpc.keepalive_timeout_ms', 20000),
+            ('grpc.keepalive_permit_without_calls', 1),
+            ('grpc.http2.max_pings_without_data', 0), # 0 = Allow infinite pings
+            ('grpc.http2.min_time_between_pings_ms', 10000), # Allow ping every 10s
+            ('grpc.http2.min_ping_interval_without_data_ms', 5000), # Allow ping every 5s even if no data
+        ]
+    )
     alphaos_pb2_grpc.add_AlphaZeroServicer_to_server(service, server)
     server.add_insecure_port(f'[::]:{port}')
     logger.info(f"🚀 gRPC Server starting on port {port}...")

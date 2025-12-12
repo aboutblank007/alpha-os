@@ -69,7 +69,7 @@ export class MT5Client {
             const url = new URL(`${this.baseUrl}/history`);
             url.searchParams.append('symbol', symbol);
             url.searchParams.append('timeframe', timeframe);
-            
+
             if (from && to) {
                 // Convert to unix timestamp (seconds)
                 url.searchParams.append('from_ts', Math.floor(from.getTime() / 1000).toString());
@@ -84,7 +84,7 @@ export class MT5Client {
                     'Content-Type': 'application/json',
                 },
                 // 设置较长的超时，因为需要等待 EA 响应
-                signal: AbortSignal.timeout(30000) 
+                signal: AbortSignal.timeout(65000)
             });
 
             if (!response.ok) {
@@ -92,10 +92,10 @@ export class MT5Client {
             }
 
             const rawData = await response.json();
-            
+
             // Validate response data with Zod
             const result = MT5HistoryResponseSchema.parse(rawData);
-            
+
             return result.data;
         } catch (error) {
             console.error('MT5 getHistory failed:', error);

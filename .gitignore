@@ -94,6 +94,7 @@ CHECK_*.sql
 SET_*.sql
 cleanup_*.sql
 query_*.sql
+_archive/
 
 # 调试脚本
 inspect_*.js

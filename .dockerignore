@@ -1,8 +1,18 @@
+# Docker
 Dockerfile
 .dockerignore
+.git
+.gitignore
+.env
+.env.local
 node_modules
 npm-debug.log
 README.md
 .next
-.git
+out
+build
+.DS_Store
 
+# AlphaOS specific
+deploy_orb.sh
+train_pipeline.sh

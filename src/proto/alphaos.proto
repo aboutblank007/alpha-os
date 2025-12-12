@@ -81,6 +81,12 @@ message TechnicalContext {
     double candle_size = 25;
     double wick_upper = 26;
     double wick_lower = 27;
+
+    // DOM Features (New)
+    double dom_imbalance = 28;
+    double dom_spread_vwa = 29;
+    double best_bid_vol = 30;
+    double best_ask_vol = 31;
 }
 
 message DOMLevel {
@@ -113,6 +119,12 @@ message Candle {
   double low = 4;
   double close = 5;
   double volume = 6;
+  
+  // Microstructure fields
+  double volume_real = 7;
+  int64 tick_count = 8;
+  double aggressor_buy = 9;
+  double aggressor_sell = 10;
 }
 
 message Quote {

@@ -21,15 +21,15 @@ export async function POST(req: Request) {
       headers: {
         'Content-Type': 'application/json',
       },
-      body: JSON.stringify({ 
-          action, 
-          symbol, 
-          volume,
-          ticket,
-          sl,
-          tp,
-          price,
-          type
+      body: JSON.stringify({
+        action,
+        symbol,
+        volume,
+        ticket,
+        sl,
+        tp,
+        price,
+        type
       }),
     });
 

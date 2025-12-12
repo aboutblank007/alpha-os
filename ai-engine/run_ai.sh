@@ -14,10 +14,10 @@ else
 fi
 
 # 3. Set Configuration (Modify IP if needed)
-export CLOUD_BRIDGE_URL="49.235.153.73:50051"
+# gRPC address format: IP:PORT (no http://)
+export CLOUD_BRIDGE_URL="100.91.208.22:50051"
 
 # 4. Run Client
 echo "🚀 Starting AI Engine..."
 echo "Target Bridge: $CLOUD_BRIDGE_URL"
 python3 src/client.py
-

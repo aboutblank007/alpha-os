@@ -4,7 +4,7 @@
 //|                                      Adapted from Pine Script V3 |
 //+------------------------------------------------------------------+
 #property copyright "Copyright 2024, AlphaOS Project"
-#property version   "3.10"
+#property version   "3.20"
 #property description "Expert Advisor: Collects Signals AND Outcomes for ML Training (Enhanced)"
 
 //--- Inputs
@@ -14,6 +14,15 @@ input int      InpATRPeriod   = 14;    // ATR Period
 input int      InpEMALength1  = 6;     // EMA Short Period
 input int      InpEMALength2  = 24;    // EMA Long Period
 input int      InpRSIPeriod   = 14;    // RSI Period (New)
+
+enum ENUM_PROFILE_MODE {
+   PROFILE_AUTO,
+   PROFILE_M1,
+   PROFILE_M5,
+   PROFILE_M15,
+   PROFILE_CUSTOM
+};
+input ENUM_PROFILE_MODE InpProfileMode = PROFILE_AUTO; // Timeframe profile
 
 input group "=== Filter Settings ==="
 enum ENUM_FILTER_MODE {
@@ -53,6 +62,26 @@ int            hHTF_EMA1;
 int            hHTF_EMA2;
 
 //--- Structures
+struct ProfileParams {
+   int    pivotPeriod;
+   int    atrPeriod;
+   int    emaShort;
+   int    emaLong;
+   int    rsiPeriod;
+   double minDistance;
+   double trendBuffer;
+   double slopeThreshold;
+   double minEMASpread;
+   int    minBarsBetween;
+   double tpMultiplier;
+   double slMultiplier;
+   double volatilityMinPct;
+   double volatilityMaxPct;
+   double rangeMinPct;
+   string tfLabel;
+};
+ProfileParams currentProfile;
+
 struct SignalFeatures {
    double ema_short;
    double ema_long;
@@ -87,6 +116,7 @@ struct VirtualTrade {
     string   signal_id;
     string   symbol;
     string   action; 
+    string   timeframe;
     double   entry_price;
     double   sl;
     double   tp;
@@ -112,20 +142,144 @@ double       BufferLastBuyBar[];
 double       BufferLastSellBar[];
 
 //+------------------------------------------------------------------+
+//| Profile helpers                                                  |
+//+------------------------------------------------------------------+
+string TimeframeLabel(ENUM_TIMEFRAMES tf)
+  {
+   switch(tf)
+     {
+      case PERIOD_M1:   return "M1";
+      case PERIOD_M5:   return "M5";
+      case PERIOD_M15:  return "M15";
+      case PERIOD_M30:  return "M30";
+      case PERIOD_H1:   return "H1";
+      case PERIOD_H4:   return "H4";
+      case PERIOD_D1:   return "D1";
+      default:          return EnumToString(tf);
+     }
+  }
+
+ProfileParams BuildProfileDefaults(ENUM_PROFILE_MODE mode)
+  {
+   ProfileParams profile;
+   profile.pivotPeriod      = InpPivotPeriod;
+   profile.atrPeriod        = InpATRPeriod;
+   profile.emaShort         = InpEMALength1;
+   profile.emaLong          = InpEMALength2;
+   profile.rsiPeriod        = InpRSIPeriod;
+   profile.minDistance      = InpMinDistance;
+   profile.trendBuffer      = InpTrendBuffer;
+   profile.slopeThreshold   = InpSlopeThreshold;
+   profile.minEMASpread     = InpMinEMASpread;
+   profile.minBarsBetween   = InpMinBarsBetween;
+   profile.tpMultiplier     = InpTPMultiplier;
+   profile.slMultiplier     = InpSLMultiplier;
+   profile.volatilityMinPct = 0.02;
+   profile.volatilityMaxPct = 2.0;
+   profile.rangeMinPct      = 0.5;
+   profile.tfLabel          = TimeframeLabel(_Period);
+
+   switch(mode)
+     {
+      case PROFILE_M1:
+         profile.pivotPeriod      = 2;
+         profile.atrPeriod        = 9;
+         profile.emaShort         = 4;
+         profile.emaLong          = 16;
+         profile.rsiPeriod        = 9;
+         profile.minDistance      = 0.18;
+         profile.trendBuffer      = 0.05;
+         profile.slopeThreshold   = 0.35;
+         profile.minEMASpread     = 0.05;
+         profile.minBarsBetween   = 1;
+         profile.tpMultiplier     = 1.5;   // Increased from 1.0 for better R:R
+         profile.slMultiplier     = 1.0;   // Increased from 0.8 to avoid noise
+         profile.volatilityMinPct = 0.005;
+         profile.volatilityMaxPct = 1.5;
+         profile.rangeMinPct      = 0.15;
+         profile.tfLabel          = "M1";
+         break;
+      case PROFILE_M5:
+         profile.pivotPeriod      = 2;
+         profile.atrPeriod        = 12;
+         profile.emaShort         = 6;
+         profile.emaLong          = 24;
+         profile.rsiPeriod        = 12;
+         profile.minDistance      = 0.28;
+         profile.trendBuffer      = 0.08;
+         profile.slopeThreshold   = 0.45;
+         profile.minEMASpread     = 0.07;
+         profile.minBarsBetween   = 2;
+         profile.tpMultiplier     = 2.0;   // Increased from 1.3 for better R:R
+         profile.slMultiplier     = 1.2;   // Increased from 0.9
+         profile.volatilityMinPct = 0.01;
+         profile.volatilityMaxPct = 1.8;
+         profile.rangeMinPct      = 0.25;
+         profile.tfLabel          = "M5";
+         break;
+      case PROFILE_M15:
+         profile.pivotPeriod      = 2;
+         profile.atrPeriod        = 14;
+         profile.emaShort         = 6;
+         profile.emaLong          = 24;
+         profile.rsiPeriod        = 14;
+         profile.minDistance      = 0.35;
+         profile.trendBuffer      = 0.10;
+         profile.slopeThreshold   = 0.50;
+         profile.minEMASpread     = 0.10;
+         profile.minBarsBetween   = 3;
+         profile.tpMultiplier     = 2.5;   // Adjusted to match progression
+         profile.slMultiplier     = 1.5;   // Adjusted
+         profile.volatilityMinPct = 0.02;
+         profile.volatilityMaxPct = 2.2;
+         profile.rangeMinPct      = 0.35;
+         profile.tfLabel          = "M15";
+         break;
+      default:
+         break;
+     }
+
+   return profile;
+  }
+
+ENUM_PROFILE_MODE ResolveProfileMode()
+  {
+   if(InpProfileMode != PROFILE_AUTO)
+      return InpProfileMode;
+
+   switch(_Period)
+     {
+      case PERIOD_M1:  return PROFILE_M1;
+      case PERIOD_M5:  return PROFILE_M5;
+      case PERIOD_M15: return PROFILE_M15;
+      default:         return PROFILE_CUSTOM;
+     }
+  }
+
+void LoadProfileParams()
+  {
+   ENUM_PROFILE_MODE mode = ResolveProfileMode();
+   currentProfile = BuildProfileDefaults(mode);
+   Print("📊 Profile Loaded: ", currentProfile.tfLabel, " (Mode=", EnumToString(mode), ")");
+  }
+
+//+------------------------------------------------------------------+
 //| Expert initialization function                                   |
 //+------------------------------------------------------------------+
 int OnInit()
   {
-   hEMA1 = iMA(_Symbol, _Period, InpEMALength1, 0, MODE_EMA, PRICE_CLOSE);
-   hEMA2 = iMA(_Symbol, _Period, InpEMALength2, 0, MODE_EMA, PRICE_CLOSE);
-   hATR  = iATR(_Symbol, _Period, InpATRPeriod);
+   LoadProfileParams();
+
+   hEMA1 = iMA(_Symbol, _Period, currentProfile.emaShort, 0, MODE_EMA, PRICE_CLOSE);
+   hEMA2 = iMA(_Symbol, _Period, currentProfile.emaLong, 0, MODE_EMA, PRICE_CLOSE);
+   hATR  = iATR(_Symbol, _Period, currentProfile.atrPeriod);
    hADX  = iADX(_Symbol, _Period, 14); 
-   hRSI  = iRSI(_Symbol, _Period, InpRSIPeriod, PRICE_CLOSE); // New
+   hRSI  = iRSI(_Symbol, _Period, currentProfile.rsiPeriod, PRICE_CLOSE); // New
    
    if(InpUseHTFFilter)
      {
-      hHTF_EMA1 = iMA(_Symbol, InpHTFPeriod, InpEMALength1, 0, MODE_EMA, PRICE_CLOSE);
-      hHTF_EMA2 = iMA(_Symbol, InpHTFPeriod, InpEMALength2, 0, MODE_EMA, PRICE_CLOSE);
+      hHTF_EMA1 = iMA(_Symbol, InpHTFPeriod, currentProfile.emaShort, 0, MODE_EMA, PRICE_CLOSE);
+      hHTF_EMA2 = iMA(_Symbol, InpHTFPeriod, currentProfile.emaLong, 0, MODE_EMA, PRICE_CLOSE);
      }
 
    if(hEMA1 == INVALID_HANDLE || hEMA2 == INVALID_HANDLE || hATR == INVALID_HANDLE || hRSI == INVALID_HANDLE)
@@ -133,6 +287,10 @@ int OnInit()
       Print("Failed to create indicator handles");
       return(INIT_FAILED);
      }
+
+   // Ensure Data Directories Exist
+   if(!FolderCreate("AlphaOS", FILE_COMMON)) FolderCreate("AlphaOS"); // Try common, then local
+   if(!FolderCreate("AlphaOS\\Signals", FILE_COMMON)) FolderCreate("AlphaOS\\Signals");
 
    // Test File Write Permission
    string test_file = "test_permission_" + IntegerToString(TimeCurrent()) + ".txt";
@@ -181,7 +339,7 @@ void OnTick()
    int i = 1; 
    
    // Need enough data
-   if(iBars(_Symbol, _Period) < InpEMALength2 + 50) return;
+  if(iBars(_Symbol, _Period) < currentProfile.emaLong + 50) return;
 
    // 1. Fetch Data
    int count = 300; // Increase buffer size for lookback calculations
@@ -221,18 +379,18 @@ void OnTick()
 
    // 4. Features
    double atr_val = atr[i];
-   double dist = (atr_val != 0) ? MathAbs(close[i] - center) / atr_val : 0;
-   
-   double slope = MathAbs(ema1[i] - ema1[i+1]) / SymbolInfoDouble(_Symbol, SYMBOL_POINT);
-   bool slope_val_ok = slope > InpSlopeThreshold;
-   double prev_slope = MathAbs(ema1[i+1] - ema1[i+2]) / SymbolInfoDouble(_Symbol, SYMBOL_POINT);
-   bool prev_slope_ok = prev_slope > InpSlopeThreshold;
+  double dist = (atr_val != 0) ? MathAbs(close[i] - center) / atr_val : 0;
+
+  double slope = MathAbs(ema1[i] - ema1[i+1]) / SymbolInfoDouble(_Symbol, SYMBOL_POINT);
+  bool slope_val_ok = slope > currentProfile.slopeThreshold;
+  double prev_slope = MathAbs(ema1[i+1] - ema1[i+2]) / SymbolInfoDouble(_Symbol, SYMBOL_POINT);
+  bool prev_slope_ok = prev_slope > currentProfile.slopeThreshold;
    bool slope_strict_ok = InpStrictSlope ? (slope_val_ok && prev_slope_ok) : slope_val_ok;
    bool slope_ok = InpUseSlope ? slope_strict_ok : false;
    
-   bool distance_ok = (dist >= InpMinDistance) || slope_ok;
+  bool distance_ok = (dist >= currentProfile.minDistance) || slope_ok;
    
-   double t_buf = atr_val * InpTrendBuffer;
+  double t_buf = atr_val * currentProfile.trendBuffer;
    bool price_above = close[i] > (center + t_buf);
    bool price_below = close[i] < (center - t_buf);
    bool trend_filter_ok = (InpFilterMode == FILTER_NONE) ? true :
@@ -264,7 +422,7 @@ void OnTick()
    // Updated Volatility Threshold (0.3 -> 0.02)
    if(InpFilterMode == FILTER_STRICT || InpDataCollectionMode)
      {
-      volatility_ok = (atr_pct >= 0.02 && atr_pct <= 2.0); // FIX: Lowered threshold
+      volatility_ok = (atr_pct >= currentProfile.volatilityMinPct && atr_pct <= currentProfile.volatilityMaxPct);
       
       int highest_idx = iHighest(_Symbol, _Period, MODE_HIGH, InpEMALength2, i);
       int lowest_idx  = iLowest(_Symbol, _Period, MODE_LOW, InpEMALength2, i);
@@ -272,18 +430,18 @@ void OnTick()
       double l_val = (lowest_idx != -1) ? iLow(_Symbol, _Period, lowest_idx) : low[i];
       
       double rng_pct = (close[i]!=0) ? ((h_val - l_val)/close[i] * 100) : 0;
-      not_chop = (rng_pct >= 0.5);
+      not_chop = (rng_pct >= currentProfile.rangeMinPct);
      }
 
-   double spread_thresh = atr_val * InpMinEMASpread;
+  double spread_thresh = atr_val * currentProfile.minEMASpread;
    bool spread_ok = MathAbs(ema1[i] - ema2[i]) > spread_thresh;
 
    static int last_buy_bar = -999;
    static int last_sell_bar = -999;
    int current_bar_idx = iBars(_Symbol, _Period) - i; 
    
-   bool time_ok_buy = (current_bar_idx - last_buy_bar >= InpMinBarsBetween);
-   bool time_ok_sell = (current_bar_idx - last_sell_bar >= InpMinBarsBetween);
+  bool time_ok_buy = (current_bar_idx - last_buy_bar >= currentProfile.minBarsBetween);
+  bool time_ok_sell = (current_bar_idx - last_sell_bar >= currentProfile.minBarsBetween);
    
    bool filters_pass_buy = trend_filter_ok && htf_trend_ok && distance_ok && volatility_ok && not_chop && spread_ok;
    bool filters_pass_sell = trend_filter_ok && htf_trend_ok && distance_ok && volatility_ok && not_chop && spread_ok;
@@ -342,8 +500,8 @@ void OnTick()
    if(valid_buy || reclaim_buy_sig)
      {
       last_buy_bar = current_bar_idx;
-      double sl = close[i] - (atr_val * InpSLMultiplier);
-      double tp = close[i] + (atr_val * InpTPMultiplier);
+      double sl = close[i] - (atr_val * currentProfile.slMultiplier);
+      double tp = close[i] + (atr_val * currentProfile.tpMultiplier);
       
       SignalFeatures features;
       features.ema_short = ema1[i];
@@ -376,13 +534,13 @@ void OnTick()
       features.wick_upper = high[i] - MathMax(open[i], close[i]);
       features.wick_lower = MathMin(open[i], close[i]) - low[i];
 
-      RegisterVirtualTrade(valid_buy ? "BUY" : "RECLAIM_BUY", close[i], sl, tp, iTime(_Symbol, _Period, i), features);
+      RegisterVirtualTrade(valid_buy ? "BUY" : "RECLAIM_BUY", close[i], sl, tp, iTime(_Symbol, _Period, i), currentProfile.tfLabel, features);
      }
    else if(valid_sell || reclaim_sell_sig)
      {
       last_sell_bar = current_bar_idx;
-      double sl = close[i] + (atr_val * InpSLMultiplier);
-      double tp = close[i] - (atr_val * InpTPMultiplier);
+      double sl = close[i] + (atr_val * currentProfile.slMultiplier);
+      double tp = close[i] - (atr_val * currentProfile.tpMultiplier);
       
       SignalFeatures features;
       features.ema_short = ema1[i];
@@ -415,7 +573,7 @@ void OnTick()
       features.wick_upper = high[i] - MathMax(open[i], close[i]);
       features.wick_lower = MathMin(open[i], close[i]) - low[i];
 
-      RegisterVirtualTrade(valid_sell ? "SELL" : "RECLAIM_SELL", close[i], sl, tp, iTime(_Symbol, _Period, i), features);
+      RegisterVirtualTrade(valid_sell ? "SELL" : "RECLAIM_SELL", close[i], sl, tp, iTime(_Symbol, _Period, i), currentProfile.tfLabel, features);
      }
 
    // 6. Manage Virtual Trades
@@ -431,8 +589,8 @@ double CalculatePivotCenter(double &high[], double &low[], int start_idx)
    int lookback = 50; 
    
    // Safety check for array bounds
-   if(start_idx + lookback + InpPivotPeriod >= arr_size) {
-       lookback = arr_size - start_idx - InpPivotPeriod - 1;
+   if(start_idx + lookback + currentProfile.pivotPeriod >= arr_size) {
+       lookback = arr_size - start_idx - currentProfile.pivotPeriod - 1;
        if(lookback < 1) return (high[start_idx] + low[start_idx]) / 2.0;
    }
 
@@ -441,13 +599,13 @@ double CalculatePivotCenter(double &high[], double &low[], int start_idx)
    for(int k=lookback; k>=0; k--)
    {
       int idx = start_idx + k;
-      if(idx - InpPivotPeriod < 0 || idx + InpPivotPeriod >= arr_size) continue;
+      if(idx - currentProfile.pivotPeriod < 0 || idx + currentProfile.pivotPeriod >= arr_size) continue;
 
       bool isPh = true;
-      for(int p=1; p<=InpPivotPeriod; p++) if(high[idx+p] > high[idx] || high[idx-p] > high[idx]) isPh = false;
+      for(int p=1; p<=currentProfile.pivotPeriod; p++) if(high[idx+p] > high[idx] || high[idx-p] > high[idx]) isPh = false;
       
       bool isPl = true;
-      for(int p=1; p<=InpPivotPeriod; p++) if(low[idx+p] < low[idx] || low[idx-p] < low[idx]) isPl = false;
+      for(int p=1; p<=currentProfile.pivotPeriod; p++) if(low[idx+p] < low[idx] || low[idx-p] < low[idx]) isPl = false;
       
       double pp = EMPTY_VALUE;
       if(isPh) pp = high[idx];
@@ -461,7 +619,7 @@ double CalculatePivotCenter(double &high[], double &low[], int start_idx)
 //+------------------------------------------------------------------+
 //| Virtual Trade Logic                                              |
 //+------------------------------------------------------------------+
-void RegisterVirtualTrade(string action, double price, double sl, double tp, datetime time, SignalFeatures &features)
+void RegisterVirtualTrade(string action, double price, double sl, double tp, datetime time, const string tf_label, SignalFeatures &features)
 {
     int size = ArraySize(active_trades);
     ArrayResize(active_trades, size+1);
@@ -472,6 +630,7 @@ void RegisterVirtualTrade(string action, double price, double sl, double tp, dat
     active_trades[size].signal_id = sig_id;
     active_trades[size].symbol = _Symbol;
     active_trades[size].action = action;
+    active_trades[size].timeframe = (StringLen(tf_label) > 0) ? tf_label : TimeframeLabel(_Period);
     active_trades[size].entry_price = price;
     active_trades[size].sl = sl;
     active_trades[size].tp = tp;
@@ -534,8 +693,8 @@ void WriteSignalEvent(VirtualTrade &trade)
    if(file_handle != INVALID_HANDLE) {
        FileSeek(file_handle, 0, SEEK_END);
        
-       string json = StringFormat(
-          "{\"type\":\"SIGNAL\",\"signal_id\":\"%s\",\"symbol\":\"%s\",\"action\":\"%s\",\"price\":%.5f,\"sl\":%.5f,\"tp\":%.5f,"
+      string json = StringFormat(
+         "{\"type\":\"SIGNAL\",\"signal_id\":\"%s\",\"symbol\":\"%s\",\"_tf\":\"%s\",\"action\":\"%s\",\"price\":%.5f,\"sl\":%.5f,\"tp\":%.5f,"
           "\"ema_short\":%.5f,\"ema_long\":%.5f,\"atr\":%.5f,\"adx\":%.5f,\"rsi\":%.5f,\"center\":%.5f,"
           "\"distance_ok\":%d,\"slope_ok\":%d,\"trend_filter_ok\":%d,\"htf_trend_ok\":%d,"
           "\"volatility_ok\":%d,\"chop_ok\":%d,\"spread_ok\":%d,"
@@ -544,7 +703,7 @@ void WriteSignalEvent(VirtualTrade &trade)
           "\"is_reclaim_signal\":%d,\"price_vs_center\":%.5f,\"cloud_width\":%.5f,"
           "\"tick_volume\":%d,\"spread\":%.5f,\"candle_size\":%.5f,\"wick_upper\":%.5f,\"wick_lower\":%.5f,"
           "\"timestamp\":%d}\n",
-          trade.signal_id, trade.symbol, trade.action, trade.entry_price, trade.sl, trade.tp,
+         trade.signal_id, trade.symbol, trade.timeframe, trade.action, trade.entry_price, trade.sl, trade.tp,
           trade.features.ema_short, trade.features.ema_long, trade.features.atr, trade.features.adx, trade.features.rsi, trade.features.center,
           trade.features.distance_ok, trade.features.slope_ok, trade.features.trend_filter_ok, trade.features.htf_trend_ok,
           trade.features.volatility_ok, trade.features.chop_ok, trade.features.spread_ok,
@@ -567,8 +726,8 @@ void WriteTradeOutcome(VirtualTrade &trade, int outcome, double exit_price, date
    int file_handle = FileOpen(filename, FILE_READ|FILE_WRITE|FILE_TXT|FILE_ANSI);
    if(file_handle != INVALID_HANDLE) {
        FileSeek(file_handle, 0, SEEK_END);
-       string json = StringFormat("{\"type\":\"OUTCOME\",\"signal_id\":\"%s\",\"outcome\":%d,\"exit_price\":%.5f,\"close_time\":%d,\"mfe\":%.5f,\"mae\":%.5f}\n",
-          trade.signal_id, outcome, exit_price, (int)close_time, trade.max_favorable, trade.max_adverse);
+      string json = StringFormat("{\"type\":\"OUTCOME\",\"signal_id\":\"%s\",\"_tf\":\"%s\",\"outcome\":%d,\"exit_price\":%.5f,\"close_time\":%d,\"mfe\":%.5f,\"mae\":%.5f}\n",
+         trade.signal_id, trade.timeframe, outcome, exit_price, (int)close_time, trade.max_favorable, trade.max_adverse);
        FileWriteString(file_handle, json);
        FileClose(file_handle);
        Print("💰 Outcome: ", outcome);

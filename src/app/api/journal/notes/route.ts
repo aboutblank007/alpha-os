@@ -52,11 +52,11 @@ export async function GET(request: Request) {
 
     if (error) throw error;
 
-    return NextResponse.json({ 
-        notes: data,
-        count,
-        page,
-        pageSize 
+    return NextResponse.json({
+      notes: data,
+      count,
+      page,
+      pageSize
     });
   } catch (error: unknown) {
     console.error('获取笔记错误:', error);

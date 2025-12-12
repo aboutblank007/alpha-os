@@ -41,6 +41,52 @@ message SignalRequest {
   double suggested_entry = 8;
   double suggested_sl = 9;
   double suggested_tp = 10;
+
+  // Technical Context (New: EA calculated features)
+  TechnicalContext technical_context = 13;
+}
+
+message TechnicalContext {
+    // Core Trend
+    double ema_short = 1;
+    double ema_long = 2;
+    double atr = 3;
+    double adx = 4;
+    double rsi = 5;
+    double center = 6;
+
+    // Boolean Flags
+    bool distance_ok = 7;
+    bool slope_ok = 8;
+    bool trend_filter_ok = 9;
+    bool htf_trend_ok = 10;
+    bool volatility_ok = 11;
+    bool chop_ok = 12;
+    bool spread_ok = 13;
+
+    // State & Structure
+    int32 bars_since_last = 14;
+    int32 trend_direction = 15;
+    int32 ema_cross_event = 16;
+    double ema_spread = 17;
+    double atr_percent = 18;
+    int32 reclaim_state = 19;
+    bool is_reclaim_signal = 20;
+    double price_vs_center = 21;
+    double cloud_width = 22;
+
+    // Microstructure
+    int64 tick_volume = 23;
+    double spread = 24;
+    double candle_size = 25;
+    double wick_upper = 26;
+    double wick_lower = 27;
+
+    // DOM Features (New)
+    double dom_imbalance = 28;
+    double dom_spread_vwa = 29;
+    double best_bid_vol = 30;
+    double best_ask_vol = 31;
 }
 
 message DOMLevel {
@@ -56,7 +102,7 @@ message SignalResponse {
   // Decision
   bool should_execute = 3;
   string action = 4; // "BUY", "SELL", "PASS"
-  double confidence = 5; // 0.0 - 1.0
+  double confidence = 5; // 0.0 - 1.0 (Used as MFE Prediction in Regression Mode)
   
   // Modified Trade Params (AI optimization)
   double adjusted_sl = 6;
@@ -80,4 +126,3 @@ message Quote {
   double bid = 2;
   double ask = 3;
 }
-

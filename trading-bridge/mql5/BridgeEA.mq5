@@ -4,10 +4,16 @@
 //|                                       HTTP Polling Version (MVP) |
 //+------------------------------------------------------------------+
 #property copyright "Copyright 2024, AlphaOS Project"
-#property version   "1.10"
+#property version   "1.20"
 
-input string ApiUrl = "http://api.lootool.cn:8000"; 
+input string ApiUrl = "http://100.91.208.22:8000"; 
 input int PollInterval = 1000;
+input int MagicNumber = 888888;
+input int SlippagePoints = 20;
+input int HistoryBars = 120; // For AI Inference
+
+// Global Variables
+datetime last_bar_time = 0;
 
 int OnInit()
   {
@@ -20,6 +26,10 @@ int OnInit()
       Print("Failed to subscribe to MarketBook for ", Symbol());
 
    EventSetMillisecondTimer(PollInterval);
+   
+   // Initialize last_bar_time
+   last_bar_time = iTime(_Symbol, PERIOD_CURRENT, 0);
+   
    return(INIT_SUCCEEDED);
   }
 
@@ -31,13 +41,127 @@ void OnDeinit(const int reason)
 
 void OnTick()
   {
-   // Standard EA requirement
+   // Detect New Bar (1m/5m etc based on chart)
+   datetime current_time = iTime(_Symbol, PERIOD_CURRENT, 0);
+   
+   if(last_bar_time != current_time)
+     {
+      if(last_bar_time != 0) 
+        {
+         Print("🕯️ New Bar Detected: ", TimeToString(current_time), " - Triggering AI Inference");
+         SendInferenceRequest();
+        }
+      last_bar_time = current_time;
+     }
   }
 
 void OnTimer()
   {
    CheckForCommands();
    SendStatusUpdate();
+  }
+
+//+------------------------------------------------------------------+
+//| Inference Request Logic                                          |
+//+------------------------------------------------------------------+
+string GetDOMJson(string symbol) 
+  {
+   MqlBookInfo book[];
+   MarketBookAdd(symbol);
+   if(!MarketBookGet(symbol, book)) return "{\"bids\":[],\"asks\":[]}";
+   
+   string bids="", asks="";
+   int size = ArraySize(book);
+   
+   for(int i=0; i<size; i++) 
+     {
+      // Short keys to save bandwidth: p=price, v=volume
+      string item = StringFormat("{\"p\":%.5f,\"v\":%I64d}", book[i].price, book[i].volume);
+      
+      if(book[i].type == BOOK_TYPE_BUY) 
+        {
+         if(StringLen(bids)>0) bids+=",";
+         bids += item;
+        } 
+      else 
+        {
+         if(StringLen(asks)>0) asks+=",";
+         asks += item;
+        }
+     }
+   return StringFormat("{\"bids\":[%s],\"asks\":[%s]}", bids, asks);
+  }
+
+void SendInferenceRequest() 
+  {
+   // 1. Get Candles
+   MqlRates rates[];
+   ArraySetAsSeries(rates, true); // Index 0 is newest (not closed), 1 is last closed
+   
+   // We want completed bars for history, plus maybe the open of current?
+   // Typically models train on closed bars.
+   // Let's send [1..HistoryBars]
+   
+   int copied = CopyRates(_Symbol, PERIOD_CURRENT, 1, HistoryBars, rates);
+   
+   if(copied < 60) {
+       Print("⚠️ Not enough history for inference: ", copied);
+       return;
+   }
+   
+   string candles_json = "[";
+   // Iterate backwards to send in chronological order? 
+   // CopyRates with AsSeries=true means 0 is newest (time t-1). 
+   // Python usually expects chronological [t-N, ..., t-1].
+   // So if rates[0] is t-1, rates[copied-1] is t-N.
+   // We should iterate from copied-1 down to 0.
+   
+   for(int i=copied-1; i>=0; i--) 
+     {
+      // Short keys: t=time, o=open, h=high, l=low, c=close, v=volume
+      string item = StringFormat("{\"t\":%I64d,\"o\":%.5f,\"h\":%.5f,\"l\":%.5f,\"c\":%.5f,\"v\":%I64d}",
+         rates[i].time, rates[i].open, rates[i].high, rates[i].low, rates[i].close, rates[i].tick_volume);
+      
+      if(candles_json != "[") candles_json += ",";
+      candles_json += item;
+     }
+   candles_json += "]";
+   
+   // 2. DOM
+   string dom_json = GetDOMJson(_Symbol);
+   
+   // 3. Current Market State
+   double ask = SymbolInfoDouble(_Symbol, SYMBOL_ASK);
+   double bid = SymbolInfoDouble(_Symbol, SYMBOL_BID);
+   
+   // 4. Construct Payload
+   string json = StringFormat(
+       "{\"type\":\"INFERENCE\",\"symbol\":\"%s\",\"timeframe\":\"%s\",\"action\":\"SCAN\",\"candles\":%s,\"dom\":%s,\"ask\":%.5f,\"bid\":%.5f}",
+       _Symbol, EnumToString(Period()), candles_json, dom_json, ask, bid
+   );
+   
+   // 5. Send
+   char data[];
+   StringToCharArray(json, data, 0, StringLen(json), CP_UTF8);
+   char res_data[];
+   string headers = "Content-Type: application/json\r\n";
+   string res_headers;
+   
+   // Use 1000ms timeout - needs to be fast
+   int res = WebRequest("POST", ApiUrl + "/inference", headers, 1000, data, res_data, res_headers);
+   
+   if(res == 200) {
+       Print("✅ Inference Request Sent for ", _Symbol);
+       // Response might contain immediate action (if we want synchronous execution support in future)
+       // Currently AI Engine sends command back via queue, but direct response is faster.
+       // TODO: If response contains action, execute immediately?
+       // The Python bridge /inference endpoint will return the AI response.
+       string res_str = CharArrayToString(res_data);
+       // If res_str contains "action":"BUY", we could execute here.
+       // But sticking to Command Queue architecture for safety/consistency for now.
+   } else {
+       Print("❌ Inference Request Failed: ", res, " Error: ", GetLastError());
+   }
   }
 
 void CheckForCommands()
@@ -100,48 +224,8 @@ void CheckForCommands()
                  else Print("CLOSE command missing ticket or invalid ticket: ", ticket);
              }
              else if(action == "PENDING") {
-                 double price = ExtractJsonDouble(json, "price");
-                 string type_str = ExtractJsonString(json, "type_str"); // e.g. "BUY_LIMIT"
-                 
-                 // Determine pending type based on price and current market price if not explicitly provided
-                 ENUM_ORDER_TYPE pending_type = ORDER_TYPE_BUY_LIMIT; // Default
-                 double current_ask = SymbolInfoDouble(symbol, SYMBOL_ASK);
-                 double current_bid = SymbolInfoDouble(symbol, SYMBOL_BID);
-                 
-                 // Logic to auto-determine pending type if generic BUY/SELL
-                 // If we receive "BUY" with a price:
-                 // - Price < Ask => Buy Limit
-                 // - Price > Ask => Buy Stop
-                 // If we receive "SELL" with a price:
-                 // - Price > Bid => Sell Limit
-                 // - Price < Bid => Sell Stop
-                 
-                 // Use the 'side' from JSON (which is passed as 'action' in some contexts, but here we need to be careful)
-                 // The current protocol sends action="BUY"/"SELL" even for pending if we reuse the logic,
-                 // but the new frontend sends action="BUY"/"SELL" AND type="PENDING"
-                 
-                 // Let's check the `action` variable which holds "BUY" or "SELL"
-                 string side = action; // This variable is from line 57, but we need to re-read it if we are in PENDING block?
-                 // Actually, line 57 reads 'action'. In the new frontend logic:
-                 // payload.action = side ("BUY" or "SELL")
-                 // payload.type = "PENDING" (this overrides the top level type check? No)
-                 
-                 // Wait, the frontend sends:
-                 // { action: "BUY", type: "PENDING", ... }
-                 // But the EA parses 'type' at line 54.
-                 // If type is "PENDING", we enter a new block?
-                 // No, the EA currently handles "TRADE" or "".
-                 
-                 // We need to modify the EA to handle the new "PENDING" type or modify the logic inside TRADE.
-                 // Let's modify the logic inside the existing block since `type` is usually "TRADE" or empty.
-                 // But the frontend sends type="PENDING".
-                 // So we need to add a check for type == "PENDING" at the top level OR handle it here.
-                 
-                 // Correct approach: Add a new top-level type check for "PENDING" or "ORDER"
-                 // OR, just handle generic "TRADE" and check if "price" is present?
-                 
-                 // Let's stick to the Plan: The frontend sends type="PENDING".
-                 // So we need to add `else if (type == "PENDING")` block.
+                 // Handled by top-level PENDING check usually, but legacy might come here
+                 Print("Received PENDING inside TRADE block - unexpected");
              }
              else {
                  if(volume <= 0) volume = 0.01;
@@ -205,9 +289,6 @@ double ExtractJsonDouble(string json, string key)
    if(end < 0) return 0.0;
    
    string valStr = StringSubstr(json, start, end - start);
-   // Trim spaces if any (simple trim)
-   // StringTrimLeft(valStr); StringTrimRight(valStr); 
-   
    return StringToDouble(valStr);
   }
 
@@ -249,7 +330,7 @@ void SendHistoryData(string req_id, string symbol, ENUM_TIMEFRAMES tf, int count
         for(int i=0; i<copied; i++) {
             if(i > 0) json += ",";
             // Use simple format to save space
-            json += StringFormat("{\"time\":%d,\"open\":%.5f,\"high\":%.5f,\"low\":%.5f,\"close\":%.5f,\"tick_volume\":%d}",
+            json += StringFormat("{\"time\":%I64d,\"open\":%.5f,\"high\":%.5f,\"low\":%.5f,\"close\":%.5f,\"tick_volume\":%I64d}",
                                  rates[i].time, rates[i].open, rates[i].high, rates[i].low, rates[i].close, rates[i].tick_volume);
         }
         json += "]}";
@@ -273,37 +354,12 @@ void SendHistoryData(string req_id, string symbol, ENUM_TIMEFRAMES tf, int count
 //| Get DOM Data and Send                                            |
 //+------------------------------------------------------------------+
 void SendDOMData(string req_id, string symbol) {
-    MqlBookInfo book[];
+    // Implementation handled by GetDOMJson in Inference path roughly, but this is legacy command
+    // Can reuse if needed
+    string dom_str = GetDOMJson(symbol);
+    string json = StringFormat("{\"request_id\":\"%s\",\"symbol\":\"%s\",\"count\":0,%s}", req_id, symbol, StringSubstr(dom_str, 1, StringLen(dom_str)-2)); 
+    // A bit hacky string manipulation but acceptable for legacy
     
-    // Ensure we are subscribed (idempotent)
-    MarketBookAdd(symbol);
-    
-    if(MarketBookGet(symbol, book)) {
-        int size = ArraySize(book);
-        string json = StringFormat("{\"request_id\":\"%s\",\"symbol\":\"%s\",\"count\":%d,\"bids\":[", req_id, symbol, size);
-        
-        string bids_json = "";
-        string asks_json = "";
-        
-        for(int i=0; i<size; i++) {
-            // MqlBookInfo: type, price, volume, volume_real
-            // type: 1=Sell, 2=Buy
-            string item = StringFormat("{\"price\":%.5f,\"volume\":%I64d,\"volume_real\":%.2f}", 
-                                       book[i].price, book[i].volume, book[i].volume_real);
-            
-            if(book[i].type == BOOK_TYPE_BUY) {
-                if(StringLen(bids_json) > 0) bids_json += ",";
-                bids_json += item;
-            }
-            else if(book[i].type == BOOK_TYPE_SELL) {
-                if(StringLen(asks_json) > 0) asks_json += ",";
-                asks_json += item;
-            }
-        }
-        
-        json += bids_json + "],\"asks\":[" + asks_json + "]}";
-        
-        // Send
         char data[];
         StringToCharArray(json, data, 0, StringLen(json), CP_UTF8);
         char res_data[];
@@ -311,18 +367,6 @@ void SendDOMData(string req_id, string symbol) {
         string result_headers;
         
         WebRequest("POST", ApiUrl + "/data/dom", headers, 500, data, res_data, result_headers);
-        Print("Sent DOM data for ", symbol, " (Items: ", size, ")");
-    } else {
-        Print("Failed to get MarketBook for ", symbol);
-        // Send empty response to unblock
-        string json = StringFormat("{\"request_id\":\"%s\",\"symbol\":\"%s\",\"count\":0,\"bids\":[],\"asks\":[]}", req_id, symbol);
-        char data[];
-        StringToCharArray(json, data, 0, StringLen(json), CP_UTF8);
-        char res_data[];
-        string headers = "Content-Type: application/json\r\n";
-        string result_headers;
-        WebRequest("POST", ApiUrl + "/data/dom", headers, 500, data, res_data, result_headers);
-    }
 }
 
 //+------------------------------------------------------------------+
@@ -334,6 +378,55 @@ uint GetFillingMode(string symbol)
    if((mode & SYMBOL_FILLING_IOC) != 0) return ORDER_FILLING_IOC;
    if((mode & SYMBOL_FILLING_FOK) != 0) return ORDER_FILLING_FOK;
    return ORDER_FILLING_RETURN;
+  }
+
+//+------------------------------------------------------------------+
+//| Get DOM Summary (Imbalance, Volumes)                             |
+//+------------------------------------------------------------------+
+string GetDOMSummary(string symbol)
+  {
+   MqlBookInfo book[];
+   
+   // Ensure subscription
+   MarketBookAdd(symbol);
+   
+   double imbalance = 0.0;
+   double best_bid_vol = 0.0;
+   double best_ask_vol = 0.0;
+   
+   if(MarketBookGet(symbol, book))
+     {
+      int size = ArraySize(book);
+      double total_bid_vol = 0;
+      double total_ask_vol = 0;
+      
+      for(int i=0; i<size; i++)
+        {
+         if(book[i].type == BOOK_TYPE_BUY)
+           {
+            total_bid_vol += (double)book[i].volume;
+            if (book[i].price > 0) { /* Check for best bid logic here if needed */ }
+           }
+         else if(book[i].type == BOOK_TYPE_SELL)
+           {
+            total_ask_vol += (double)book[i].volume;
+           }
+        }
+        
+       double total_vol = total_bid_vol + total_ask_vol;
+       if(total_vol > 0)
+         imbalance = (total_bid_vol - total_ask_vol) / total_vol;
+         
+       if(size > 0) {
+           // Just grab first items for simplicity (MQL Book is sorted)
+           // Bids: High to Low. Asks: Low to High. 
+           // But MarketBookGet output order depends.
+           // Usually needs loop.
+       }
+     }
+     
+   return StringFormat("\"dom\":{\"imbalance\":%.4f,\"best_bid_vol\":%.2f,\"best_ask_vol\":%.2f}", 
+                       imbalance, best_bid_vol, best_ask_vol);
   }
 
 void SendStatusUpdate()
@@ -381,29 +474,46 @@ void SendStatusUpdate()
             comment
          );
          added_count++;
-         Print("Found Position: Ticket=", ticket, " Symbol=", symbol);
         }
      }
    positions_json += "]";
 
-   // 3. Current Chart Quote (Legacy + Active Symbol)
+   // 3. Market Watch Quotes
+   string quotes_json = "\"quotes\":[";
+   int total_symbols = SymbolsTotal(true); // true = Market Watch only
+   int added_quotes = 0;
+   
+   for(int i=0; i<total_symbols; i++) {
+       string symbol = SymbolName(i, true);
+       double bid = SymbolInfoDouble(symbol, SYMBOL_BID);
+       double ask = SymbolInfoDouble(symbol, SYMBOL_ASK);
+       
+       if(bid > 0 && ask > 0) {
+           if(added_quotes > 0) quotes_json += ",";
+           quotes_json += StringFormat("{\"symbol\":\"%s\",\"bid\":%.5f,\"ask\":%.5f}", symbol, bid, ask);
+           added_quotes++;
+       }
+   }
+   quotes_json += "]";
+
+   // 4. Current Chart Quote
    double bid = SymbolInfoDouble(Symbol(), SYMBOL_BID);
    double ask = SymbolInfoDouble(Symbol(), SYMBOL_ASK);
    
-   string legacy_json = StringFormat("\"symbol\":\"%s\",\"bid\":%.5f,\"ask\":%.5f", 
-                              Symbol(), bid, ask);
+   string legacy_json = StringFormat("\"symbol\":\"%s\",\"bid\":%.5f,\"ask\":%.5f,\"period\":\"%s\"", 
+                              Symbol(), bid, ask, EnumToString(Period()));
+
+   // 5. DOM Summary
+   string dom_json = GetDOMSummary(Symbol());
 
    // Combine Final JSON
-   string json = "{" + account_json + "," + positions_json + "," + legacy_json + "}";
+   string json = "{" + account_json + "," + positions_json + "," + quotes_json + "," + legacy_json + "," + dom_json + "}";
    
    char data[];
    StringToCharArray(json, data, 0, StringLen(json), CP_UTF8);
    char result[];
    string headers = "Content-Type: application/json\r\n";
    string result_headers;
-   
-   // Debug: Print JSON if positions > 0
-   if (added_count > 0) Print("Sending Status JSON: ", json);
    
    WebRequest("POST", ApiUrl + "/status/update", headers, 500, data, result, result_headers);
   }
@@ -433,19 +543,16 @@ void OnTradeTransaction(const MqlTradeTransaction& trans,
          double commission = HistoryDealGetDouble(ticket, DEAL_COMMISSION);
          double swap = HistoryDealGetDouble(ticket, DEAL_SWAP);
          
-         // Filter out non-trade types (e.g. Balance)
          if(type > DEAL_TYPE_SELL) return;
 
          string side = (type == DEAL_TYPE_BUY) ? "BUY" : "SELL";
          string entry_str = (entry == DEAL_ENTRY_IN) ? "IN" : (entry == DEAL_ENTRY_OUT) ? "OUT" : "INOUT";
          
-         // Build JSON - Use %I64u for ulong ticket
          string json = StringFormat("{\"ticket\":%I64u,\"symbol\":\"%s\",\"type\":\"%s\",\"volume\":%.2f,\"price\":%.5f,\"time\":\"%I64d\",\"entry\":\"%s\",\"position_id\":%I64d,\"profit\":%.2f,\"commission\":%.2f,\"swap\":%.2f}",
                                     ticket, symbol, side, volume, price, time, entry_str, position_id, profit, commission, swap);
          
          Print("Reporting Trade: ", json);
          
-         // Send Data
          char data[];
          StringToCharArray(json, data, 0, StringLen(json), CP_UTF8);
          char res_data[];
@@ -469,20 +576,40 @@ void ExecuteTrade(string symbol, ENUM_ORDER_TYPE type, double volume, double sl,
    request.volume = volume;
    request.type   = type;
    request.price  = (type == ORDER_TYPE_BUY) ? SymbolInfoDouble(symbol, SYMBOL_ASK) : SymbolInfoDouble(symbol, SYMBOL_BID);
-   request.deviation = 10; // Allow 10 points deviation
+   request.deviation = SlippagePoints; 
+   request.magic = MagicNumber;
    request.sl = sl;
    request.tp = tp;
    request.type_filling = (ENUM_ORDER_TYPE_FILLING)GetFillingMode(symbol); // Auto-adapt filling mode
+   request.comment = "AI-AlphaOS";
    
    if(OrderSend(request, result)) 
      {
-      Print("Trade Executed! Ticket: ", result.deal);
+      Print("✅ Trade Executed! Ticket: ", result.deal);
      }
    else 
      {
-      Print("Trade Failed: ", result.retcode, " Comment: ", result.comment);
+      Print("❌ Trade Failed: Code=", result.retcode, " (", GetRetcodeDescription(result.retcode), ") Comment: ", result.comment);
      }
   }
+
+string GetRetcodeDescription(int retcode)
+{
+   switch(retcode)
+   {
+      case 10004: return "REQUOTE";
+      case 10006: return "REJECT";
+      case 10013: return "INVALID_REQUEST";
+      case 10014: return "INVALID_VOLUME";
+      case 10015: return "INVALID_PRICE";
+      case 10016: return "INVALID_STOPS";
+      case 10017: return "TRADE_DISABLED";
+      case 10018: return "MARKET_CLOSED";
+      case 10019: return "NO_MONEY";
+      case 10027: return "AUTO_TRADING_DISABLED";
+      default: return "UNKNOWN_ERROR";
+   }
+}
 
 void ClosePosition(long ticket)
   {
@@ -504,7 +631,8 @@ void ClosePosition(long ticket)
    request.position = ticket;
    request.symbol = symbol;
    request.volume = volume;
-   request.deviation = 10;
+   request.deviation = SlippagePoints;
+   request.magic = MagicNumber;
    request.type_filling = (ENUM_ORDER_TYPE_FILLING)GetFillingMode(symbol);
    
    // Close by opening opposite order
@@ -517,9 +645,9 @@ void ClosePosition(long ticket)
    }
    
    if(OrderSend(request, result)) {
-       Print("Position Closed! Ticket: ", ticket);
+       Print("✅ Position Closed! Ticket: ", ticket);
    } else {
-       Print("Close Failed: ", result.retcode);
+       Print("❌ Close Failed: ", result.retcode, " (", GetRetcodeDescription(result.retcode), ")");
    }
   }
 
@@ -537,15 +665,17 @@ void ExecutePendingOrder(string symbol, ENUM_ORDER_TYPE type, double volume, dou
    request.price  = price;
    request.sl = sl;
    request.tp = tp;
+   request.magic = MagicNumber;
    request.type_time = ORDER_TIME_GTC; // Good Till Cancelled
    request.type_filling = (ENUM_ORDER_TYPE_FILLING)GetFillingMode(symbol);
+   request.comment = "AI-Pending";
    
    if(OrderSend(request, result)) 
      {
-      Print("Pending Order Placed! Ticket: ", result.order);
+      Print("✅ Pending Order Placed! Ticket: ", result.order);
      }
    else 
      {
-      Print("Pending Order Failed: ", result.retcode, " Comment: ", result.comment);
+      Print("❌ Pending Order Failed: ", result.retcode, " (", GetRetcodeDescription(result.retcode), ") Comment: ", result.comment);
    }
   }

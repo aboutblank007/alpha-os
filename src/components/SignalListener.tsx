@@ -19,7 +19,7 @@ export function SignalListener() {
         addSignal(signal);
         setToastSignal(signal);
         setShowToast(true);
-        
+
         // Play sound
         try {
             const AC = (window as unknown as { AudioContext?: typeof AudioContext; webkitAudioContext?: typeof AudioContext }).AudioContext || (window as unknown as { webkitAudioContext?: typeof AudioContext }).webkitAudioContext;
@@ -51,15 +51,14 @@ export function SignalListener() {
                 .select('*')
                 .order('created_at', { ascending: false })
                 .limit(50);
-            
+
             if (data) {
                 setSignals(data as Signal[]);
             }
         };
-        
+
         fetchRecent();
 
-        // Subscribe to new signals
         const channel = supabase
             .channel('realtime_signals')
             .on(
@@ -67,8 +66,13 @@ export function SignalListener() {
                 { event: 'INSERT', schema: 'public', table: 'signals' },
                 (payload) => {
                     const newSignal = payload.new as Signal;
-                    if (newSignal.status === 'new') {
+
+                    // If it's a new signal OR an AI inference result, we want to notify and add to store
+                    if (newSignal.status === 'new' || newSignal.source === 'ai_inference') {
                         handleNewSignal(newSignal);
+                    } else {
+                        // Otherwise just add to store silently (e.g. log entries)
+                        addSignal(newSignal);
                     }
                 }
             )
@@ -89,10 +93,10 @@ export function SignalListener() {
     const handleSelectSignal = (signal: Signal) => {
         setSelectedSignal(signal);
         setShowTradePanel(true);
-        
+
         // Optionally mark signal as 'viewed' or 'processed' in DB
         // We do this when opening the trade panel
-        supabase.from('signals').update({ status: 'processed' }).eq('id', signal.id).then(() => {});
+        supabase.from('signals').update({ status: 'processed' }).eq('id', signal.id).then(() => { });
     };
 
     // Helper to parse AI info
@@ -102,7 +106,7 @@ export function SignalListener() {
         // "Auto: Executed (AI: 0.85)" 
         // "Auto: Skipped (AI: 0.65 < 0.75)"
         // "Manual Signal"
-        
+
         const aiMatch = comment.match(/AI:\s*(\d+\.?\d*)/);
         if (aiMatch) {
             const confidence = parseFloat(aiMatch[1]);
@@ -147,14 +151,13 @@ export function SignalListener() {
                                 const aiInfo = getAIInfo(toastSignal.comment);
                                 if (aiInfo) {
                                     return (
-                                        <div className={`text-xs px-2 py-1 rounded border flex items-center gap-2 mt-1 ${
-                                            aiInfo.isSkipped 
-                                                ? 'bg-red-500/10 border-red-500/20 text-red-400' 
-                                                : 'bg-green-500/10 border-green-500/20 text-green-400'
-                                        }`}>
+                                        <div className={`text-xs px-2 py-1 rounded border flex items-center gap-2 mt-1 ${aiInfo.isSkipped
+                                            ? 'bg-red-500/10 border-red-500/20 text-red-400'
+                                            : 'bg-green-500/10 border-green-500/20 text-green-400'
+                                            }`}>
                                             <Bot size={12} />
                                             <span>
-                                                {aiInfo.isSkipped ? 'AI 拦截' : 'AI 推荐'} 
+                                                {aiInfo.isSkipped ? 'AI 拦截' : 'AI 推荐'}
                                                 (信心: {(aiInfo.confidence * 100).toFixed(0)}%)
                                             </span>
                                         </div>
@@ -165,7 +168,7 @@ export function SignalListener() {
                         </div>
                     }
                     action={
-                        <button 
+                        <button
                             onClick={handleToastAction}
                             className="flex items-center gap-1 bg-white/10 hover:bg-white/20 px-3 py-1.5 rounded-lg text-sm font-medium transition-colors"
                         >

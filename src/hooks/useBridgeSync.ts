@@ -5,7 +5,7 @@ import { useTradeStore } from '@/store/useTradeStore';
 export function useBridgeSync(pollInterval = 1000) {
   const { setConnectionStatus, updateMarketData, setLastUpdate } = useMarketStore();
   const { updateAccountInfo, updatePositions } = useTradeStore();
-  
+
   const pollRef = useRef<NodeJS.Timeout | null>(null);
 
   useEffect(() => {
@@ -19,7 +19,8 @@ export function useBridgeSync(pollInterval = 1000) {
         // Update Market Store
         setConnectionStatus(data.bridge_status === 'connected', end - start);
         if (data.active_symbols) {
-          updateMarketData(data.active_symbols, data.symbol_prices || {});
+          const period = data.last_mt5_update?.period;
+          updateMarketData(data.active_symbols, data.symbol_prices || {}, period);
         }
         setLastUpdate(new Date());
 

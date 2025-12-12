@@ -12,10 +12,11 @@ interface MarketStore {
   lastUpdate: Date | null;
   activeSymbols: string[];
   symbolPrices: Record<string, MarketPrice>;
-  
+  chartPeriod: string | null;
+
   // Actions
   setConnectionStatus: (isConnected: boolean, latency: number | null) => void;
-  updateMarketData: (activeSymbols: string[], symbolPrices: Record<string, MarketPrice>) => void;
+  updateMarketData: (activeSymbols: string[], symbolPrices: Record<string, MarketPrice>, chartPeriod?: string) => void;
   setLastUpdate: (date: Date) => void;
 }
 
@@ -25,18 +26,20 @@ export const useMarketStore = create<MarketStore>((set) => ({
   lastUpdate: null,
   activeSymbols: [],
   symbolPrices: {},
+  chartPeriod: null,
 
   setConnectionStatus: (isConnected, latency) => set({ isConnected, latency }),
-  
-  updateMarketData: (activeSymbols, symbolPrices) => set((state) => {
+
+  updateMarketData: (activeSymbols, symbolPrices, chartPeriod) => set((state) => {
     // Optimistic update or merge if needed, but simple replacement is usually fine for snapshot data
     // We could merge symbolPrices if we wanted to keep stale prices for other symbols
-    return { 
-      activeSymbols, 
-      symbolPrices: { ...state.symbolPrices, ...symbolPrices } 
+    return {
+      activeSymbols,
+      symbolPrices: { ...state.symbolPrices, ...symbolPrices },
+      ...(chartPeriod ? { chartPeriod } : {})
     };
   }),
-  
+
   setLastUpdate: (date) => set({ lastUpdate: date }),
 }));
 

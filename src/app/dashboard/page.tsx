@@ -1,5 +1,6 @@
 "use client";
 
+import { AiMarketMonitor } from '@/components/AiMarketMonitor';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { TrendingUp, DollarSign, Target, Activity, Calendar, ArrowRight, Share2, FileDown, Zap, X } from 'lucide-react';
 import { StatCard } from '@/components/Card';
@@ -11,6 +12,10 @@ import { TradingInsights } from '@/components/TradingInsights';
 import { SentimentAnalysis } from '@/components/SentimentAnalysis';
 import { RiskAlerts } from '@/components/RiskAlerts';
 import { supabase, type Trade } from '@/lib/supabase';
+import { AnalyticsPanel } from '@/components/analytics/AnalyticsPanel';
+
+
+// 3. Add to WORKSPACE_PRESETS and default layout state.
 import { Button } from '@/components/ui/Button';
 import { Modal } from '@/components/ui/Modal';
 import { TradingViewChart } from '@/components/charts/TradingViewChart';
@@ -37,9 +42,24 @@ type ConfirmKind = 'export' | 'share' | 'reset' | null;
 interface TagItem { id: string; date: string; label: string }
 
 const WORKSPACE_PRESETS: Record<string, string[]> = {
-    '默认工作区': ['market', 'marketWatch', 'chart', 'symbols', 'orders', 'insights', 'sentiment', 'alerts', 'sessions', 'recent'],
-    '分析': ['chart', 'insights', 'sentiment', 'symbols', 'recent'],
-    '策略': ['market', 'alerts', 'sessions', 'marketWatch', 'symbols']
+    '默认工作区': ['market', 'marketWatch', 'chart', 'symbols', 'orders', 'insights', 'ai_monitor', 'alerts', 'sessions', 'recent'],
+    '分析': ['chart', 'analytics', 'symbols', 'recent'], // Replaced insights and ai_monitor with full analytics panel
+    '策略': ['market', 'alerts', 'sessions', 'marketWatch', 'ai_monitor']
+};
+
+const KEY_LABELS: Record<string, string> = {
+    market: '市场概览 (Market)',
+    marketWatch: '行情监控 (Watch)',
+    chart: '图表 (Chart)',
+    symbols: '品种表现 (Performance)',
+    recent: '最近交易 (History)',
+    orders: '持仓订单 (Orders)',
+    insights: '交易洞察 (Insights)',
+    analytics: '深度分析 (Analytics)', // New Label
+    sentiment: '市场情绪 (Sentiment)',
+    alerts: '风险警报 (Alerts)',
+    sessions: '市场时段 (Sessions)',
+    ai_monitor: 'AI 监控 (AI Monitor)'
 };
 
 export default function DashboardPage() {
@@ -62,7 +82,7 @@ export default function DashboardPage() {
 
     // Default layout with new components
     const [layout, setLayout] = useState<string[]>(() => {
-        const saved = typeof window !== 'undefined' ? localStorage.getItem('alphaos_layout_v5') : null;
+        const saved = typeof window !== 'undefined' ? localStorage.getItem('alphaos_layout_v6') : null;
         return saved ? JSON.parse(saved) : ['market', 'marketWatch', 'chart', 'symbols', 'orders', 'insights', 'sentiment', 'alerts', 'sessions', 'recent'];
     });
 
@@ -75,8 +95,8 @@ export default function DashboardPage() {
     // Handle workspace change
     useEffect(() => {
         if (typeof window === 'undefined') return;
-        
-        const saved = localStorage.getItem(`alphaos_layout_v5_${workspace}`);
+
+        const saved = localStorage.getItem(`alphaos_layout_v6_${workspace}`);
         if (saved) {
             setLayout(JSON.parse(saved));
         } else {
@@ -155,6 +175,7 @@ export default function DashboardPage() {
 
     useEffect(() => {
         if (typeof window === 'undefined') return;
+
         const onKey = (e: KeyboardEvent) => {
             if (e.metaKey && e.key.toLowerCase() === 'e') setConfirm('export');
             if (e.metaKey && e.key.toLowerCase() === 's') setConfirm('share');
@@ -169,9 +190,9 @@ export default function DashboardPage() {
 
         const closed = trades.filter(t => t.status === 'closed');
         const sortedTrades = [...closed].sort((a, b) => new Date(a.created_at).getTime() - new Date(b.created_at).getTime());
-        
+
         const totalPnL = sortedTrades.reduce((sum, t) => sum + t.pnl_net, 0);
-        
+
         // Use account balance to determine start balance if available
         // initial = current - totalPnL
         const startBalance = account ? (account.balance - totalPnL) : 10000;
@@ -184,7 +205,7 @@ export default function DashboardPage() {
                 equity: cumulative,
             };
         });
-        
+
         // If we have account but no trades, show a straight line or single point
         if (curve.length === 0 && account) {
             curve.push({
@@ -403,6 +424,7 @@ export default function DashboardPage() {
                     return 'col-span-1 md:col-span-2 lg:col-span-3'; // Equity Curve
                 case 'orders':
                 case 'recent':
+                case 'analytics':
                     return 'col-span-1 md:col-span-2 lg:col-span-4';
                 default:
                     return 'col-span-1';
@@ -420,8 +442,11 @@ export default function DashboardPage() {
                 case 'orders':
                 case 'recent':
                     return 'h-[350px] md:h-[400px]';
+                case 'analytics':
+                    return 'h-[600px]';
                 case 'insights':
                 case 'sentiment':
+                case 'ai_monitor':
                 case 'alerts':
                 case 'sessions':
                     return 'h-[250px] md:h-[300px]';
@@ -458,10 +483,14 @@ export default function DashboardPage() {
                     return <OngoingOrders />;
                 case 'recent':
                     return <RecentTrades trades={closedTrades} />;
+                case 'analytics':
+                    return <AnalyticsPanel trades={trades} />;
                 case 'insights':
                     return <TradingInsights trades={trades} />;
                 case 'sentiment':
                     return <SentimentAnalysis trades={trades} />;
+                case 'ai_monitor':
+                    return <AiMarketMonitor />;
                 case 'marketWatch':
                     return <MarketWatch isConnected={isConnected} onTrade={handleTrade} onSymbolSelect={setSelectedSymbol} />;
                 case 'alerts':
@@ -477,7 +506,7 @@ export default function DashboardPage() {
             <div className={`${isOverlay ? 'h-full w-full' : baseClass} ${isOverlay ? 'shadow-2xl scale-105 cursor-grabbing' : ''}`}>
                 {/* Wrap content in ErrorBoundary */}
                 <ErrorBoundary>
-                {content}
+                    {content}
                 </ErrorBoundary>
             </div>
         );
@@ -522,7 +551,7 @@ export default function DashboardPage() {
                                 </div>
                             </div>
                         </div>
-                        <button 
+                        <button
                             onClick={() => setIsFocusMode(false)}
                             className="p-2 -mr-2 text-slate-400 hover:text-white active:text-white transition-colors rounded-full hover:bg-white/5"
                         >
@@ -540,11 +569,11 @@ export default function DashboardPage() {
 
                         {/* Market Watch - Takes remaining space for full list */}
                         <div className="flex-1 w-full border-b border-white/5 bg-slate-900/30 backdrop-blur-sm overflow-hidden min-h-0">
-                            <MarketWatch 
-                                isConnected={isConnected} 
-                                onTrade={handleTrade} 
-                                onSymbolSelect={setSelectedSymbol} 
-                                variant="focus" 
+                            <MarketWatch
+                                isConnected={isConnected}
+                                onTrade={handleTrade}
+                                onSymbolSelect={setSelectedSymbol}
+                                variant="focus"
                             />
                         </div>
 
@@ -563,14 +592,14 @@ export default function DashboardPage() {
                 <div className="relative overflow-hidden rounded-2xl glass-panel-strong p-6 border border-white/10 shadow-2xl">
                     <div className="relative z-10 flex flex-col gap-4">
                         <div className="flex items-center justify-between">
-                             <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-white/5 border border-white/10 text-xs font-medium text-accent-primary backdrop-blur-md shadow-sm w-fit">
+                            <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-white/5 border border-white/10 text-xs font-medium text-accent-primary backdrop-blur-md shadow-sm w-fit">
                                 <span className="relative flex h-2 w-2">
                                     <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-accent-primary opacity-75"></span>
                                     <span className="relative inline-flex rounded-full h-2 w-2 bg-accent-primary"></span>
                                 </span>
                                 {workspace}
                             </div>
-                            <button 
+                            <button
                                 onClick={() => setIsFocusMode(true)}
                                 className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-amber-500/10 border border-amber-500/20 text-amber-500 text-xs font-bold hover:bg-amber-500/20 transition-colors"
                             >
@@ -578,7 +607,7 @@ export default function DashboardPage() {
                                 专注模式
                             </button>
                         </div>
-                        
+
                         <h1 className="text-3xl font-bold text-white tracking-tight-custom text-balance drop-shadow-lg">
                             <span className="text-gradient">AlphaOS</span>
                         </h1>
@@ -614,9 +643,9 @@ export default function DashboardPage() {
                 <div className="space-y-4">
                     {/* Chart First */}
                     <div className="h-[350px]">
-                         <TradingViewChart className="h-full" height={350} initialSymbol={selectedSymbol} key={selectedSymbol} />
+                        <TradingViewChart className="h-full" height={350} initialSymbol={selectedSymbol} key={selectedSymbol} />
                     </div>
-                    
+
                     {/* Market Watch */}
                     <div className="h-[400px]">
                         <MarketWatch isConnected={isConnected} onTrade={handleTrade} onSymbolSelect={setSelectedSymbol} />
@@ -624,7 +653,7 @@ export default function DashboardPage() {
 
                     {/* Equity Curve */}
                     <div className="h-[300px]">
-                         <EquityCurve
+                        <EquityCurve
                             data={equityData}
                             period={period}
                             overlays={overlays}
@@ -635,8 +664,8 @@ export default function DashboardPage() {
                         />
                     </div>
 
-                     {/* Orders */}
-                     <div className="h-[350px]">
+                    {/* Orders */}
+                    <div className="h-[350px]">
                         <OngoingOrders />
                     </div>
 
@@ -645,24 +674,24 @@ export default function DashboardPage() {
                         <div className="col-span-1 h-[200px] overflow-hidden rounded-xl">
                             <TradingInsights trades={trades} />
                         </div>
-                         <div className="col-span-1 h-[200px] overflow-hidden rounded-xl">
+                        <div className="col-span-1 h-[200px] overflow-hidden rounded-xl">
                             <SentimentAnalysis trades={trades} />
                         </div>
                     </div>
-                    
-                     {/* Alerts & Sessions */}
-                     <div className="space-y-4">
-                         <div className="h-[250px]">
+
+                    {/* Alerts & Sessions */}
+                    <div className="space-y-4">
+                        <div className="h-[250px]">
                             <RiskAlerts stats={stats} onResetLayout={() => setConfirm('reset')} />
-                         </div>
-                         <div className="h-[250px]">
+                        </div>
+                        <div className="h-[250px]">
                             <MarketSessions />
-                         </div>
-                     </div>
+                        </div>
+                    </div>
 
                     {/* Recent Trades */}
                     <div className="h-[400px]">
-                         <RecentTrades trades={closedTrades} />
+                        <RecentTrades trades={closedTrades} />
                     </div>
                 </div>
             </div>

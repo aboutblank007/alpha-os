@@ -1,6 +1,6 @@
 # AlphaOS - MT5 智能交易管理系统
 
-> 一个现代化的 MT5 交易管理和分析平台，集成实时交易执行、数据分析、交易日志以及**分布式 AI 信号过滤**功能。
+> 一个现代化的 MT5 交易管理和分析平台，集成实时交易执行、数据分析、交易日志以及**分布式 AI 高频交易**功能。
 
 ---
 
@@ -12,67 +12,76 @@
 - [功能模块](#功能模块)
 - [部署指南](#部署指南)
 - [技术栈](#技术栈)
-- [项目结构](#项目结构)
+
+## 📂 项目结构
+
+```text
+alpha-os/
+├── ai-engine/                  # [AI] 本地 AI 推理与训练引擎
+│   ├── models/                 #     LightGBM 模型 (Scalping V2, Scanner V1)
+│   ├── src/                    #     gRPC 客户端与特征计算逻辑
+│   │   ├── client.py           #         主客户端（集成 QuantumNet/LGBM/DQN/ARIMA）
+│   │   ├── features.py         #         微结构与技术特征工程
+│   │   └── models/             #         模型定义 (DQN, QuantumNet, TimeSeries)
+├── trading-bridge/             # [Backend] 交易桥接层
+│   ├── docker/                 #     Bridge API 与 MT5 容器配置
+│   ├── mql5/                   #     MetaTrader 5 策略与指标
+│   │   ├── AlphaOS_Executor.mq5 #        [NEW] 订单执行与账户状态上报 EA
+│   │   ├── AlphaOS_Scanner.mq5  #        [NEW] 市场扫描与 AI 推理触发 EA
+│   │   ├── BridgeEA.mq5        #         (Legacy) 综合执行 EA
+│   │   └── PivotTrendSignals.mq5 #       信号生成指标
+│   └── src/                    #     FastAPI + gRPC 服务源码
+├── src/                        # [Frontend] Next.js Web 应用
+│   ├── app/                    #     App Router 页面
+│   ├── components/             #     React 组件 (Charts, Dashboard)
+│   ├── db/                     #     Supabase SQL Schema
+│   └── proto/                  #     gRPC 协议定义 (.proto)
+├── deploy_orb.sh               # 远程部署脚本
+└── train_pipeline.sh           # AI 训练自动化流水线
+```
 
 ---
 
 ## ✨ 核心特性
 
-### 1. 🔗 MT5 交易桥接 (AlphaBridge)
+### 1. 🧠 1-5分钟高频 AI 架构 (New)
 
-- ✅ **Docker 容器化架构**: MT5 终端 + Wine 环境 + Python API 桥接
-- ✅ **ZeroMQ 高速通信**: 实现毫秒级指令传输
-- ✅ **远程部署支持**: 支持 Ubuntu 服务器一键部署
-- ✅ **VNC 可视化管理**: 提供 Web VNC 界面远程管理 MT5
-- ✅ **REST API**: 标准化接口对接前端
-- ✅ **实时价格数据**: MT5 实时行情推送
-- ✅ **自动交易执行**: 市价单、挂单、平仓操作
+专为短线剥头皮（Scalping）设计的全新架构，响应速度 < 50ms。
 
-### 2. 🧠 分布式 AI 引擎 (Phase 5)
+- ✅ **集成模型 (Ensemble)**:
+    - **LightGBM Online**: 基于 34 个核心特征的快速趋势过滤。
+    - **QuantumNet-Lite**: 深度学习模型，捕捉 120 步历史序列的时序形态。
+    - **DQN Agent**: 强化学习智能体，基于 50 维微结构状态（成交量冲击、订单失衡）进行博弈决策。
+    - **Phase 7: Jump/Citadel Optimization (Intel Mac & L1 Data)** `[IN PROGRESS]`
+      - **Feature**: Synthetic Microstructure (`absorption_ratio`, `tick_velocity`) to simulate L2 data.
+      - **Compute**: ONNX Runtime acceleration for Intel CPU inference (3-5x speedup).
+      - **Risk**: Time-Based Exit ("Stalemate" logic) & Spread Protection.
+    - **Streaming ARIMA-GARCH**: 实时波动率预测，动态计算 SL/TP 止损止盈。
+- ✅ **微结构特征**: 引入 Volume Shock、Order Imbalance、Spread/ATR 等高频特征。
+- ✅ **反事实训练 (Virtual Training)**: 独创的“时光机”技术，将历史 WAIT 信号转化为虚拟交易数据，大幅扩展训练集 (14x)。
+- ✅ **智能反手**: 支持 AI 信号反转时自动平仓并反手开单。
+- ✅ **防过量交易**: 同一品种同方向最多 2 单，叠加全局最大持仓上限。
+- ✅ **动态风控**: 基于 ARIMA-GARCH 预测波动的动态 SL/TP，及 **AI-Kelly** 动态仓位管理，极端波动自动拒单。
 
-- ✅ **本地高性能推理**: 利用本地 M2 Pro/M3 Max 芯片进行 AI 运算，无需昂贵的云 GPU
-- ✅ **gRPC 实时流**: 云端 Bridge 与本地 AI 引擎通过 gRPC 双向实时通信
-- ✅ **双模式支持**:
-    - **Pure AI**: 纯 AI 驱动的信号生成
-    - **Indicator + AI**: 传统指标信号 + AI 二次确认过滤
-- ✅ **元标注 (Meta-Labeling)**: 自动收集交易上下文用于模型迭代训练
+### 2. 🔗 双 EA 桥接架构 (AlphaBridge)
+
+- ✅ **AlphaOS_Scanner**: 专注于市场数据扫描，新 K 线生成时毫秒级触发 AI 推理。
+- ✅ **AlphaOS_Executor**: 专注于订单执行与状态上报，支持部分状态合并更新。
+- ✅ **ZeroMQ/HTTP 高速通信**: 实现毫秒级指令传输。
+- ✅ **Docker 容器化**: MT5 终端 + Wine 环境 + Python API 桥接。
 
 ### 3. 📊 智能仪表盘
 
-- ✅ **MT5 实时净资产同步**: 直接显示 MT5 账户净值和浮动盈亏
-- ✅ **交易统计分析**: 总盈亏、胜率、盈亏比、最大回撤
-- ✅ **持仓订单管理**: 实时持仓显示，一键平仓
-- ✅ **市场行情监控**: 多品种实时报价（外汇、黄金、加密货币）
-- ✅ **权益曲线图**: 可视化账户净值变化
-- ✅ **品种表现分析**: 不同交易品种的盈亏统计
-- ✅ **风险警报系统**: 智能监控风险指标
-- ✅ **拖拽式布局**: 自定义组件排列，本地保存
+- ✅ **实时全状态同步**: 同时展示来自 Scanner 的实时价格和 Executor 的账户净值。
+- ✅ **AI 决策可视化**: 显示 AI 置信度 (Score)、延迟 (Latency) 及动态止损止盈位。
+- ✅ **交易统计分析**: 总盈亏、胜率、盈亏比、最大回撤。
+- ✅ **持仓订单管理**: 实时持仓显示，一键平仓。
 
 ### 4. 📝 交易日志 (Journal)
 
-- ✅ **月度日历视图**: 直观展示每日交易盈亏
-- ✅ **交易笔记功能**: 支持心情、市场观察、学习要点
-- ✅ **标签和策略**: 为交易添加标签和策略分类
-- ✅ **CSV 批量导入**: 支持 DeepSeek、ThinkMarkets 等格式
-- ✅ **自动去重**: 基于订单编号智能去重
-- ✅ **智能数量转换**: 不同平台格式自动统一
-
-### 5. 📈 数据分析 (Analytics)
-
-- ✅ **多维度统计**: 日、周、月、年度交易分析
-- ✅ **品种表现榜**: 各交易品种收益排行
-- ✅ **策略分析**: 不同策略的胜率和收益对比
-- ✅ **盈亏比分析**: 计算平均盈亏比和夏普比率
-- ⏳ **MAE/MFE 分析**: 最大不利/有利偏移分析（待实现）
-- ⏳ **回撤分析**: 详细的回撤曲线和统计（待实现）
-
-### 6. ⚙️ 用户设置
-
-- ✅ **个人信息管理**: 用户名、邮箱、时区设置
-- ✅ **交易偏好**: 默认货币、风险等级
-- ✅ **主题定制**: 深色模式、强调色选择
-- ✅ **通知配置**: 邮件通知、交易提醒、风险警报
-- ✅ **自动化规则**: 配置 AI 模式和信心阈值
+- ✅ **自动化归档**: 每一笔 AI 交易自动记录到 Supabase 数据库。
+- ✅ **训练闭环**: 交易结果（盈亏、MAE/MFE）自动回传，用于后续 AI 模型训练。
+- ✅ **月度日历视图**: 直观展示每日交易盈亏。
 
 ---
 
@@ -80,17 +89,33 @@
 
 ```mermaid
 graph TB
-    Frontend[AlphaOS Frontend\nNext.js 16] -- REST API --> Bridge[Cloud Bridge API\nFastAPI]
-    Bridge -- ZeroMQ --> MT5[MetaTrader 5\nWine Container]
-    Bridge -- gRPC Stream <--> LocalAI[Local AI Engine\nPython Client (M2 Pro)]
-    MT5 -- Sync --> Supabase[(Supabase DB)]
+    Frontend[AlphaOS Frontend] -- HTTP --> Bridge[Cloud Bridge API]
+    
+    subgraph Trading Bridge
+    Bridge -- Command Queue --> Executor[AlphaOS Executor EA]
+    Scanner[AlphaOS Scanner EA] -- Inference Push --> Bridge
+    end
+    
+    subgraph AI Engine
+    Bridge -- gRPC Stream <--> Ensemble[Ensemble Model]
+    Ensemble -- Score --> Logic[Decision Logic]
+    Logic -- Signal + SL/TP --> Bridge
+    end
+    
+    subgraph Models
+    Ensemble --> LGBM[LightGBM]
+    Ensemble --> QNet[QuantumNet]
+    Ensemble --> DQN[DQN Agent]
+    Ensemble --> TS[ARIMA-GARCH]
+    end
+    
+    MT5[(MT5 Terminal)] -- Sync --> Supabase[(Supabase DB)]
     Bridge -- Sync --> Supabase
-    Frontend -- Realtime --> Supabase
 ```
 
 ### 分布式拓扑
-- **Cloud**: 运行前端、Bridge API、MT5 容器和 Supabase。负责路由转发和数据持久化。
-- **Local**: 运行 AI Engine。利用本地算力进行特征计算和模型推理，保护策略隐私并降低成本。
+- **Cloud (Remote)**: 运行前端、Bridge API、MT5 容器（运行 EA）和 Supabase。负责数据路由和持久化。
+- **Local / AI Server**: 运行 AI Engine。利用 CPU/GPU 进行多模型并行推理。
 
 ---
 
@@ -103,142 +128,141 @@ graph TB
 - **Supabase**: 数据库账户
 - **Python 3.9+**: 用于本地 AI 引擎
 
-### 1. 克隆项目
+### 1. 部署 (远程)
+
+项目使用 `deploy_orb.sh` 脚本进行远程一键部署。
 
 ```bash
-git clone <repository-url>
-cd alpha-os
+# 部署所有服务（AI, Bridge, Web, Supabase）
+./deploy_orb.sh
+
+# 仅部署特定服务
+./deploy_orb.sh --ai --bridge --web
+
+# 部署本地 Supabase（首次需要）
+./deploy_orb.sh --supabase
+
+# 从云端迁移数据到本地
+./deploy_orb.sh --migrate
 ```
 
-### 2. 安装前端依赖
+**重要配置**：
+- 网络统一：所有服务运行在 `alphaos-net` 网络，支持容器名互访
+- 端口配置：
+  - Web: `3001`
+  - Bridge API: `8000`
+  - AI Engine: `50051`
+  - MT5 VNC: `3000`
+  - Supabase Studio: `54323`
+  - Supabase API: `54321`
+  - Supabase DB: `54322`
 
-```bash
-npm install
-```
 
-### 3. 配置环境变量
+### 2. EA 挂载
 
-在项目根目录创建 `.env.local` 文件：
-
-```bash
-# Supabase 配置（数据库）
-NEXT_PUBLIC_SUPABASE_URL=https://your-project.supabase.co
-NEXT_PUBLIC_SUPABASE_ANON_KEY=your_supabase_anon_key
-
-# MT5 Trading Bridge API
-TRADING_BRIDGE_API_URL=http://your-server-ip:8000
-```
-
-### 4. 设置数据库
-
-在 Supabase 项目的 SQL 编辑器中执行：
-
-```bash
-# 查看完整 SQL 脚本
-cat src/db/FULL_SCHEMA_V2.sql
-```
-
-将 `src/db/FULL_SCHEMA_V2.sql` 的内容粘贴到 Supabase SQL Editor 并执行。
-
-### 5. 启动开发服务器
-
-```bash
-npm run dev
-```
-
-访问: `http://localhost:3000`
+1.  **编译 EA**: 使用 MetaEditor 编译 `AlphaOS_Scanner.mq5` 和 `AlphaOS_Executor.mq5`。
+2.  **挂载 Scanner**: 在目标交易品种（如 BTCUSD 1m）图表上挂载 `AlphaOS_Scanner`。
+    *   *功能*: 负责监听行情，触发 AI。
+3.  **挂载 Executor**: 在任意图表上挂载 `AlphaOS_Executor`。
+    *   *功能*: 负责接收 AI 信号下单，上报账户资金。
 
 ---
 
-## 🐳 部署指南
+## 📚 文档索引
 
-### 1. 云端服务部署 (Docker)
+### 📘 已完成文档 (Completed)
 
-项目已包含完整的 Docker 配置，支持一键部署前端和 MT5 Bridge。
-
-```bash
-# 1. 部署所有服务 (MT5 + Bridge API + Frontend)
-./deploy_service.sh all
-
-# 2. 或者仅部署 Bridge 和 MT5
-./deploy_service.sh bridge-api
-./deploy_service.sh mt5
-```
-
-### 2. 本地 AI 引擎启动 (Mac/Local)
-
-在本地高性能机器（如 Mac M2/M3）上运行 AI 推理引擎：
-
-```bash
-cd ai-engine
-
-# 1. 首次安装环境
-./setup_local.sh
-
-# 2. 启动客户端 (连接到云端 Bridge)
-source venv/bin/activate
-export CLOUD_BRIDGE_URL=your-cloud-ip:50051
-python src/client.py
-```
-
----
-
-## 📖 功能模块
-
-### 仪表盘 (Dashboard)
-**路径**: `/dashboard`
-- **实时净资产**: 显示 MT5 账户净值和浮动盈亏
-- **AI 信号通知**: 实时接收并展示经过 AI 过滤的交易信号
-- **TradingView 图表**: 集成 TradingView 轻量级图表库
-
-### 自动化设置 (Settings -> Automation)
-**路径**: `/settings`
-- **AI 模式选择**: 切换 "经典"、"指标+AI" 或 "纯 AI" 模式
-- **信心阈值**: 设置 AI 介入的最低信心分数 (0.5 - 0.95)
-
----
-
-## 🛠 技术栈
-
-### 前端
-| 技术 | 版本 | 说明 |
-|------|------|------|
-| Next.js | 16.0.3 | React 框架（App Router） |
-| React | 19.2.0 | UI 库 |
-| TypeScript | 5.x | 类型安全 |
-| Tailwind CSS | 4.x | 样式库 |
-| Lightweight Charts | 5.0.9 | 图表库 |
-
-### 后端 (Cloud Bridge)
-| 技术 | 说明 |
-|------|------|
-| Python FastAPI | API 服务网关 |
-| gRPC (AsyncIO) | 实时双向流通信 |
-| ZeroMQ | 与 MT5 进程内通信 |
-| Docker | 容器化部署 |
-
-### AI Engine (Local)
-| 技术 | 说明 |
-|------|------|
-| LightGBM | 梯度提升决策树模型 |
-| scikit-learn | 特征工程管道 |
-| gRPC Client | 长连接通信 |
+- **[开发备忘录](docs/DEVELOPMENT_LOG.md)**
+  > **开发必读**。记录所有重要的开发决策、问题解决过程和系统优化历史。
+- **[反事实MFE成功报告](docs/COUNTERFACTUAL_MFE_SUCCESS.md)** 🎉
+  > **重大突破**。成功实现反事实MFE计算，85%成功率，解决7.4:92.6类别不平衡问题。
+- **[反事实MFE优化计划](docs/COUNTERFACTUAL_MFE_PLAN.md)**
+  > **性能优化方案**。包含批量查询、物化视图等优化建议（已基本实现，可选）。
+- **[部署与迁移指南](docs/DEPLOYMENT_GUIDE.md)**
+  > **运维必读**。涵盖网络统一架构、一键部署流程、云端数据迁移及常见故障排查。
+- **[AlphaOS 官方完全手册](docs/ALPHAOS_OFFICIAL_MANUAL.md)**
+  > **核心必读 (SSOT)**。整合了产品手册、技术架构与 API 参考，是项目的单一真理来源。
+- **[产品使用手册](docs/PRODUCT_MANUAL.md)**
+  > 面向最终用户。包含系统安装、MT5 连接、仪表盘操作指南及 AI 模式配置说明。
+- **[项目技术文档](docs/PROJECT_DOCUMENTATION.md)**
+  > 面向开发者。详细说明了 Next.js 前端、FastAPI Bridge 与本地 AI 引擎的技术实现。
 
 ---
 
 ## 📝 更新日志
 
+### v2.6.0 (2025-12-12) - 网络统一 & 本地化部署
+- ✅ **网络架构优化**:
+    - 统一所有服务至 `alphaos-net` 单一网络，简化服务间通信
+    - Supabase 使用 `docker-compose.override.yml` 双网络模式，兼容内部服务与外部调用
+- ✅ **本地 Supabase 部署**:
+    - 支持一键部署本地 Supabase 容器，端口自动避让（54321/54322/54323）
+    - 完整数据持久化至 `~/alpha-os-data/supabase`
+- ✅ **云端数据迁移**:
+    - 新增 `--migrate` 标志，支持从云端 Supabase 迁移数据至本地
+    - 自动应用云端数据库 schema至本地实例
+    - 成功迁移 2000+ 条生产数据（signals, trades, automation_rules 等）
+- ✅ **部署优化**:
+    - 修复 Docker 构建时环境变量注入问题（Web/AI/Bridge 统一修复）
+    - 本地 `.env.local` 值在部署前展开，确保远程构建获得正确配置
+- ✅ **文档完善**:
+    - 新增部署故障排查文档（端口冲突、环境变量问题）
+    - 更新部署脚本使用说明
+
+### v2.2.0 (2025-12-06) - 1-5m 高频架构
+- ✅ **高频 AI**: 引入 LightGBM + QuantumNet + DQN + ARIMA 四模型集成。
+- ✅ **微结构特征**: 支持 Order Flow 和 Volatility Shock 特征。
+- ✅ **双 EA 架构**: 拆分 Scanner 和 Executor，提升并发处理能力。
+- ✅ **智能反手**: 完整的反手开仓与持仓限制逻辑，同向持仓硬限制 2 单。
+- ✅ **风险与依赖加固**: AI 引擎固定 CPU 版 Torch（避免 CUDA 依赖），动态风控阈值支持环境变量收紧。
+
 ### v2.1.0 (2025-11-27) - AI 驱动版
 **Phase 5: Distributed AI Architecture**
 - ✅ **架构升级**: 引入 gRPC 分布式架构，实现 Local AI + Cloud Bridge。
 - ✅ **AI 引擎**: 新增 `ai-engine` 模块，支持本地特征计算和推理。
-- ✅ **前端增强**: 自动化规则支持配置 AI 模式和信心阈值；信号通知支持显示 AI 决策。
-- ✅ **数据库合并**: 所有 SQL 脚本整合为 `src/db/FULL_SCHEMA_V2.sql`。
 
-### v2.0.0 (2025-11-24)
-- ✅ 完整的 MT5 交易桥接系统
-- ✅ Docker 容器化部署
-- ✅ 优化的数据库架构
+---
+
+### v2.3.0 (2025-12-08) - Intel/AMD Optimization & Regime Switching
+- ✅ **性能优化 (Performance)**:
+    - **Polars 核心**: 全面替换 Pandas 为 Polars (Rust)，特征计算速度提升 20x。
+    - **Async Process Pool**: 实现 CPU 密集型任务的异步进程池卸载，彻底解决 gRPC 事件循环阻塞。
+- ✅ **策略增强 (Intelligence)**:
+    - **Regime Switching**: 新增市场状态识别 (Trend/Range/Volatile)。
+    - **Dynamic Enforcement**: 基于 ADX 和 ATR% 动态调整模型权重（趋势期重注 QuantumNet，震荡期重注 DQN）。
+- ✅ **鲁棒性修复 (Robustness)**:
+    - **Time Bias Fix**: 修复 Look-Ahead Bias，强制使用 K 线时间戳而非系统时间。
+    - **Warm-up Gate**: 新增冷启动数据完整性检查 (<50 bars 自动等待)。
+
+### v2.4.0 (2025-12-09) - AI Governance & Data Pipeline
+- ✅ **策略迁移 (AI Migration)**:
+    - **Reclaim Strategy**: 将核心趋势反转策略（Reclaim）完全迁移至 AI Engine 内部实现。
+    - **Unified Logic**: AI Engine 成为唯一决策中心，消除“双脑”决策冲突。
+    - **Data-Rich Signals**: 即使是规则型交易也具备完整的 AI 微观特征数据。
+- ✅ **全链路数据闭环 (Data Loop)**:
+    - **Full Recording**: 无论执行与否（SCAN/WAIT/TRADE），所有 AI 推理记录（特征+决策）均完整存入 Supabase。
+    - **Consistency**: 修复了数据库与日志的 SL/TP 记录一致性，确保训练数据零误差。
+    - **Auto-Learning Ready**: 为 Auto-Learner 构建了包含正负样本的高质量数据集。
+
+### v2.5.0 (2025-12-10) - AI-Driven Kelly Position Sizing
+- ✅ **AI 驱动仓位管理 (Smart Sizing)**:
+    - **Dynamic Kelly**: 结合凯利公式 (Kelly Criterion) 与 AI 实时信心分数 (Confidence Score)，动态计算每笔交易的最佳仓位。
+    - **Confidence Linking**: 高信心信号自动加大仓位，低信心信号自动降权，实现收益最大化与风险最小化的平衡。
+    - **Circuit Breaker**: 新增每日最大亏损熔断机制，触及阈值自动停止开仓。
+- ✅ **前端可视化配置**:
+    - 在自动化策略矩阵中新增凯利系数、回溯交易周期、最大手数及每日风控的完整配置面板。
+
+### v2.7.0 (2025-12-13) - Data Separation & Virtual Training
+- ✅ **数据治理 (Data Separation)**:
+    - 物理隔离真实交易 (`training_signals`) 与 市场扫描负样本 (`market_scans`)。
+    - 保证实盘数据的绝对纯净，同时保留海量未执行信号用于训练。
+- ✅ **虚拟训练 (Counterfactual Training)**:
+    - 实现 `enhance_features.py` 内部仿真引擎，利用历史 SL/TP 进行“反事实”推演。
+    - 成功将 1.5万条 WAIT 信号转化为带盈亏标签的有效数据，训练出 Model v3 (R2 指标首次转正)。
+- ✅ **模型版本控制 (Versioning)**:
+    - 实现 `v1 -> v2 -> v3` 自动递增与指针管理，支持 `--reset` 重置训练。
+- ✅ **性能监控 (Monitoring)**:
+    - 上线 `monitor_performance.py`，提供实时 Win Rate、PnL 及 AI 决策分布 (BUY vs WAIT) 的 ASCII 看板。
 
 ---
 

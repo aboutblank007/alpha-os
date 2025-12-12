@@ -21,7 +21,7 @@ export async function GET(request: Request) {
     const status = searchParams.get('status');
     const page = parseInt(searchParams.get('page') || '0');
     const pageSize = parseInt(searchParams.get('pageSize') || '50');
-    
+
     // Calculate range for pagination
     const from = page * pageSize;
     const to = from + pageSize - 1;
@@ -34,7 +34,7 @@ export async function GET(request: Request) {
     if (status) {
       query = query.eq('status', status);
     }
-    
+
     const { data, error, count } = await query.range(from, to);
 
     if (error) {
@@ -42,8 +42,8 @@ export async function GET(request: Request) {
       return NextResponse.json({ error: error.message }, { status: 500, headers: corsHeaders });
     }
 
-    return NextResponse.json({ 
-      data, 
+    return NextResponse.json({
+      data,
       count,
       page,
       pageSize
@@ -61,7 +61,7 @@ export async function POST(request: Request) {
     }
 
     const body = await request.json();
-    
+
     // Basic validation
     if (!body.symbol || !body.side || body.entry_price === undefined || body.entry_price === null || !body.quantity) {
       return NextResponse.json(
@@ -82,7 +82,7 @@ export async function POST(request: Request) {
       .order('created_at', { ascending: true }); // FIFO
 
     if (fetchError) {
-        console.error('Error fetching open trades:', fetchError);
+      console.error('Error fetching open trades:', fetchError);
     }
 
     let remainingQuantity = body.quantity;
@@ -90,110 +90,110 @@ export async function POST(request: Request) {
 
     // If matching open trade found, close it (partial or full)
     if (openTrades && openTrades.length > 0) {
-        for (const openTrade of openTrades) {
-            if (remainingQuantity <= 0) break;
+      for (const openTrade of openTrades) {
+        if (remainingQuantity <= 0) break;
 
-            const closeQty = Math.min(openTrade.quantity, remainingQuantity);
-            
-            let pnl = 0;
-            const entryPrice = openTrade.entry_price;
-            const exitPrice = body.entry_price || entryPrice; 
+        const closeQty = Math.min(openTrade.quantity, remainingQuantity);
 
-            if (openTrade.side === 'buy') { // Closing a Long
-                pnl = (exitPrice - entryPrice) * closeQty;
-            } else { // Closing a Short
-                pnl = (entryPrice - exitPrice) * closeQty;
-            }
+        let pnl = 0;
+        const entryPrice = openTrade.entry_price;
+        const exitPrice = body.entry_price || entryPrice;
 
-            // Full match
-            if (Math.abs(openTrade.quantity - closeQty) < 0.0001) {
-                const { error: updateError } = await supabase
-                    .from('trades')
-                    .update({
-                        status: 'closed',
-                        exit_price: exitPrice,
-                        pnl_net: pnl,
-                        pnl_gross: pnl,
-                        mae: body.mae,
-                        mfe: body.mfe,
-                    })
-                    .eq('id', openTrade.id);
-                
-                if (updateError) console.error('Error updating trade:', updateError);
-                remainingQuantity -= closeQty;
-                tradeProcessed = true;
-            } else {
-                // Partial match
-                const newOpenQty = openTrade.quantity - closeQty;
-                
-                // 1. Reduce quantity of existing open trade
-                const { error: updateError } = await supabase
-                    .from('trades')
-                    .update({ quantity: newOpenQty })
-                    .eq('id', openTrade.id);
-
-                if (updateError) {
-                    console.error('Error updating partial trade:', updateError);
-                } else {
-                    // 2. Insert the closed portion
-                    const { error: insertError } = await supabase
-                        .from('trades')
-                        .insert([
-                            {
-                                symbol: openTrade.symbol,
-                                side: openTrade.side,
-                                entry_price: openTrade.entry_price,
-                                exit_price: exitPrice,
-                                quantity: closeQty,
-                                pnl_net: pnl,
-                                pnl_gross: pnl,
-                                commission: (openTrade.commission || 0) * (closeQty / openTrade.quantity),
-                                status: 'closed',
-                                notes: `Partial close of ${openTrade.id}`,
-                                strategies: openTrade.strategies,
-                                account_id: openTrade.account_id,
-                                mae: body.mae,
-                                mfe: body.mfe
-                            }
-                        ]);
-                    
-                    if (insertError) console.error('Error inserting closed partial trade:', insertError);
-                }
-
-                remainingQuantity -= closeQty;
-                tradeProcessed = true;
-            }
+        if (openTrade.side === 'buy') { // Closing a Long
+          pnl = (exitPrice - entryPrice) * closeQty;
+        } else { // Closing a Short
+          pnl = (entryPrice - exitPrice) * closeQty;
         }
+
+        // Full match
+        if (Math.abs(openTrade.quantity - closeQty) < 0.0001) {
+          const { error: updateError } = await supabase
+            .from('trades')
+            .update({
+              status: 'closed',
+              exit_price: exitPrice,
+              pnl_net: pnl,
+              pnl_gross: pnl,
+              mae: body.mae,
+              mfe: body.mfe,
+            })
+            .eq('id', openTrade.id);
+
+          if (updateError) console.error('Error updating trade:', updateError);
+          remainingQuantity -= closeQty;
+          tradeProcessed = true;
+        } else {
+          // Partial match
+          const newOpenQty = openTrade.quantity - closeQty;
+
+          // 1. Reduce quantity of existing open trade
+          const { error: updateError } = await supabase
+            .from('trades')
+            .update({ quantity: newOpenQty })
+            .eq('id', openTrade.id);
+
+          if (updateError) {
+            console.error('Error updating partial trade:', updateError);
+          } else {
+            // 2. Insert the closed portion
+            const { error: insertError } = await supabase
+              .from('trades')
+              .insert([
+                {
+                  symbol: openTrade.symbol,
+                  side: openTrade.side,
+                  entry_price: openTrade.entry_price,
+                  exit_price: exitPrice,
+                  quantity: closeQty,
+                  pnl_net: pnl,
+                  pnl_gross: pnl,
+                  commission: (openTrade.commission || 0) * (closeQty / openTrade.quantity),
+                  status: 'closed',
+                  notes: `Partial close of ${openTrade.id}`,
+                  strategies: openTrade.strategies,
+                  account_id: openTrade.account_id,
+                  mae: body.mae,
+                  mfe: body.mfe
+                }
+              ]);
+
+            if (insertError) console.error('Error inserting closed partial trade:', insertError);
+          }
+
+          remainingQuantity -= closeQty;
+          tradeProcessed = true;
+        }
+      }
     }
 
     // If no matching open trade found, or quantity remains, insert as new open position
     if (!tradeProcessed || remainingQuantity > 0) {
-        const { data, error } = await supabase
-          .from('trades')
-          .insert([
-            {
-              symbol: body.symbol,
-              side: body.side,
-              entry_price: body.entry_price,
-              exit_price: body.exit_price,
-              quantity: remainingQuantity,
-              pnl_net: body.pnl_net || 0,
-              pnl_gross: body.pnl_gross || 0,
-              commission: body.commission || 0,
-              status: body.status || 'open',
-              notes: body.notes,
-              strategies: body.strategies,
-              mae: body.mae,
-              mfe: body.mfe
-            },
-          ])
-          .select();
+      const { data, error } = await supabase
+        .from('trades')
+        .insert([
+          {
+            symbol: body.symbol,
+            side: body.side,
+            entry_price: body.entry_price,
+            exit_price: body.exit_price,
+            quantity: remainingQuantity,
+            pnl_net: body.pnl_net || 0,
+            pnl_gross: body.pnl_gross || 0,
+            commission: body.commission || 0,
+            status: body.status || 'open',
+            notes: body.notes,
+            strategies: body.strategies,
+            mae: body.mae,
+            mfe: body.mfe
+          },
+        ])
+        .select();
 
-        if (error) {
-            console.error('Supabase error:', error);
-            return NextResponse.json({ error: error.message }, { status: 500, headers: corsHeaders });
-        }
-        return NextResponse.json({ data }, { status: 201, headers: corsHeaders });
+      if (error) {
+        console.error('Supabase error:', error);
+        return NextResponse.json({ error: error.message }, { status: 500, headers: corsHeaders });
+      }
+      return NextResponse.json({ data }, { status: 201, headers: corsHeaders });
     }
 
     return NextResponse.json({ message: 'Trade processed/closed' }, { status: 200, headers: corsHeaders });

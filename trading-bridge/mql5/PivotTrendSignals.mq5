@@ -4,7 +4,7 @@
 //|                                      Adapted from Pine Script V3 |
 //+------------------------------------------------------------------+
 #property copyright "Copyright 2024, AlphaOS Project"
-#property version   "2.21"
+#property version   "3.00"
 #property indicator_chart_window
 #property indicator_buffers 18 
 #property indicator_plots   6
@@ -69,6 +69,7 @@ input int      InpPivotPeriod = 2;     // Pivot Point Period
 input int      InpATRPeriod   = 14;    // ATR Period
 input int      InpEMALength1  = 6;     // EMA Short Period
 input int      InpEMALength2  = 24;    // EMA Long Period
+input int      InpRSIPeriod   = 14;    // RSI Period (Synced with DataCollector)
 
 input group "=== Filter Settings ==="
 input ENUM_FILTER_MODE InpFilterMode = FILTER_BASIC; // Filter Mode
@@ -100,6 +101,10 @@ input double   InpLabelOffset    = 1.0;   // Label Offset (ATR Multiplier)
 input ENUM_LABEL_SIZE InpLabelSize = SIZE_NORMAL; // Label Size
 input int      InpCloudAlpha     = 70;    // Cloud Transparency (0-255)
 
+input group "=== Hybrid AI Settings ==="
+input bool     InpContinuousScan = false; // Enable Continuous AI Scanning
+input int      InpScanFrequency  = 1;     // Scan every N bars (1 = every bar)
+
 //--- Buffers
 double         BufferFill1[];
 double         BufferFill2[];
@@ -126,6 +131,7 @@ int            hEMA1;
 int            hEMA2;
 int            hATR;
 int            hADX;
+int            hRSI; // New: RSI Handle
 int            hHTF_EMA1;
 int            hHTF_EMA2;
 
@@ -134,11 +140,13 @@ string         Prefix = "AlphaOS_Label_";
 string         LastLabelName = "";
 int            last_signal_index = 0;
 
+// Updated SignalFeatures to match DataCollector
 struct SignalFeatures {
    double ema_short;
    double ema_long;
    double atr;
    double adx;
+   double rsi;        // New
    double center;
    bool distance_ok;
    bool slope_ok;
@@ -156,6 +164,11 @@ struct SignalFeatures {
    bool is_reclaim_signal;
    double price_vs_center;
    double cloud_width;
+   long tick_volume;  // New
+   double spread;     // New
+   double candle_size;// New
+   double wick_upper; // New
+   double wick_lower; // New
 };
 
 // Function Prototypes
@@ -200,6 +213,7 @@ int OnInit()
    hEMA2 = iMA(_Symbol, _Period, InpEMALength2, 0, MODE_EMA, PRICE_CLOSE);
    hATR  = iATR(_Symbol, _Period, InpATRPeriod);
    hADX  = iADX(_Symbol, _Period, 14); 
+   hRSI  = iRSI(_Symbol, _Period, InpRSIPeriod, PRICE_CLOSE); // New: RSI
    
    if(InpUseHTFFilter)
      {
@@ -207,7 +221,7 @@ int OnInit()
       hHTF_EMA2 = iMA(_Symbol, InpHTFPeriod, InpEMALength2, 0, MODE_EMA, PRICE_CLOSE);
      }
 
-   if(hEMA1 == INVALID_HANDLE || hEMA2 == INVALID_HANDLE || hATR == INVALID_HANDLE)
+   if(hEMA1 == INVALID_HANDLE || hEMA2 == INVALID_HANDLE || hATR == INVALID_HANDLE || hRSI == INVALID_HANDLE)
      {
       Print("Failed to create indicator handles");
       return(INIT_FAILED);
@@ -223,6 +237,11 @@ int OnInit()
 void OnDeinit(const int reason)
   {
    ObjectsDeleteAll(0, Prefix);
+   IndicatorRelease(hEMA1);
+   IndicatorRelease(hEMA2);
+   IndicatorRelease(hATR);
+   IndicatorRelease(hADX);
+   IndicatorRelease(hRSI);
   }
 
 //+------------------------------------------------------------------+
@@ -270,11 +289,12 @@ int OnCalculate(const int rates_total,
   {
    if(rates_total < InpEMALength2 + 50) return(0);
 
-   double ema1[], ema2[], atr[], adx[];
+   double ema1[], ema2[], atr[], adx[], rsi[];
    CopyBuffer(hEMA1, 0, 0, rates_total, ema1);
    CopyBuffer(hEMA2, 0, 0, rates_total, ema2);
    CopyBuffer(hATR, 0, 0, rates_total, atr);
    CopyBuffer(hADX, 0, 0, rates_total, adx); 
+   CopyBuffer(hRSI, 0, 0, rates_total, rsi); // New: Copy RSI
 
    int start = prev_calculated - 1;
    if(start < InpEMALength2) start = InpEMALength2;
@@ -441,10 +461,12 @@ int OnCalculate(const int rates_total,
          CalcLastBuyBar[i] = i;
          CalcLastSellBar[i] = last_sell; 
          
-         signal_txt = valid_buy ? "买入" : "Reclaim";
+         signal_txt = valid_buy ? "AI-Buy" : "Reclaim-Buy";
          signal_clr = InpColorBuy;
          is_buy = true;
-                  if(i == rates_total - 2)
+         
+         // Only write file for recent bars (optimize performance)
+         if(i >= rates_total - 2)
            {
             double sl = close[i] - (atr_val * InpSLMultiplier);
             double tp = close[i] + (atr_val * InpTPMultiplier);
@@ -454,15 +476,16 @@ int OnCalculate(const int rates_total,
             features.ema_long = ema2[i];
             features.atr = atr_val;
             features.adx = adx[i];
+            features.rsi = rsi[i]; // New
             features.center = center;
             features.distance_ok = distance_ok;
             features.slope_ok = slope_ok;
             features.trend_filter_ok = trend_filter_ok;
             features.htf_trend_ok = htf_trend_ok;
             features.volatility_ok = volatility_ok;
-            features.chop_ok = not_chop; // Note: logic uses not_chop
+            features.chop_ok = not_chop; 
             features.spread_ok = spread_ok;
-            features.bars_since_last = i - last_buy; // Approximate
+            features.bars_since_last = i - last_buy; 
             features.trend_direction = trend_up ? 1 : 0;
             features.ema_cross_event = cross_up ? 1 : 0;
             features.ema_spread = ema1[i] - ema2[i];
@@ -471,6 +494,13 @@ int OnCalculate(const int rates_total,
             features.is_reclaim_signal = reclaim_buy_sig;
             features.price_vs_center = close[i] - center;
             features.cloud_width = MathAbs(ema1[i] - ema2[i]);
+            
+            // New Microstructure Features
+            features.tick_volume = tick_volume[i];
+            features.spread = (double)SymbolInfoInteger(_Symbol, SYMBOL_SPREAD) * SymbolInfoDouble(_Symbol, SYMBOL_POINT);
+            features.candle_size = MathAbs(high[i] - low[i]);
+            features.wick_upper = high[i] - MathMax(open[i], close[i]);
+            features.wick_lower = MathMin(open[i], close[i]) - low[i];
 
             WriteSignalToFile(valid_buy ? "BUY" : "RECLAIM_BUY", close[i], sl, tp, signal_txt, features);
            }
@@ -481,11 +511,11 @@ int OnCalculate(const int rates_total,
          CalcLastSellBar[i] = i;
          CalcLastBuyBar[i] = last_buy; 
          
-         signal_txt = valid_sell ? "卖出" : "Reclaim";
+         signal_txt = valid_sell ? "AI-Sell" : "Reclaim-Sell";
          signal_clr = InpColorSell;
          is_buy = false;
          
-         if(i == rates_total - 2)
+         if(i >= rates_total - 2)
            {
             double sl = close[i] + (atr_val * InpSLMultiplier);
             double tp = close[i] - (atr_val * InpTPMultiplier);
@@ -495,6 +525,7 @@ int OnCalculate(const int rates_total,
             features.ema_long = ema2[i];
             features.atr = atr_val;
             features.adx = adx[i];
+            features.rsi = rsi[i]; // New
             features.center = center;
             features.distance_ok = distance_ok;
             features.slope_ok = slope_ok;
@@ -512,6 +543,13 @@ int OnCalculate(const int rates_total,
             features.is_reclaim_signal = reclaim_sell_sig;
             features.price_vs_center = close[i] - center;
             features.cloud_width = MathAbs(ema1[i] - ema2[i]);
+            
+            // New Microstructure Features
+            features.tick_volume = tick_volume[i];
+            features.spread = (double)SymbolInfoInteger(_Symbol, SYMBOL_SPREAD) * SymbolInfoDouble(_Symbol, SYMBOL_POINT);
+            features.candle_size = MathAbs(high[i] - low[i]);
+            features.wick_upper = high[i] - MathMax(open[i], close[i]);
+            features.wick_lower = MathMin(open[i], close[i]) - low[i];
 
             WriteSignalToFile(valid_sell ? "SELL" : "RECLAIM_SELL", close[i], sl, tp, signal_txt, features);
            }
@@ -527,6 +565,54 @@ int OnCalculate(const int rates_total,
          CreateLabel(time[i], is_buy ? low[i] - text_offset : high[i] + text_offset, 
                      signal_txt + " @ " + DoubleToString(close[i], _Digits), 
                      signal_clr, is_buy);
+        }
+        
+      // --- Hybrid AI Continuous Scanning ---
+      // Only trigger on the completed bar (i == rates_total - 2)
+      // And only if enabled
+      if(InpContinuousScan && i == rates_total - 2)
+        {
+         // Check frequency (optional, for now trigger every bar)
+         // Generate a SCAN signal payload
+         
+         // Use current close as reference
+         double scan_sl = close[i] - (atr_val * InpSLMultiplier); // Dummy SL
+         double scan_tp = close[i] + (atr_val * InpTPMultiplier); // Dummy TP
+         
+         SignalFeatures scan_features;
+         // Copy all features (reusing logic)
+         scan_features.ema_short = ema1[i];
+         scan_features.ema_long = ema2[i];
+         scan_features.atr = atr_val;
+         scan_features.adx = adx[i];
+         scan_features.rsi = rsi[i];
+         scan_features.center = center;
+         scan_features.distance_ok = distance_ok;
+         scan_features.slope_ok = slope_ok;
+         scan_features.trend_filter_ok = trend_filter_ok;
+         scan_features.htf_trend_ok = htf_trend_ok;
+         scan_features.volatility_ok = volatility_ok;
+         scan_features.chop_ok = not_chop; 
+         scan_features.spread_ok = spread_ok;
+         scan_features.bars_since_last = i - last_buy; 
+         scan_features.trend_direction = trend_up ? 1 : 0;
+         scan_features.ema_cross_event = cross_up ? 1 : (cross_dn ? -1 : 0);
+         scan_features.ema_spread = ema1[i] - ema2[i];
+         scan_features.atr_percent = atr_pct;
+         scan_features.reclaim_state = rec_state;
+         scan_features.is_reclaim_signal = false; // Scan is not a signal
+         scan_features.price_vs_center = close[i] - center;
+         scan_features.cloud_width = MathAbs(ema1[i] - ema2[i]);
+         scan_features.tick_volume = tick_volume[i];
+         scan_features.spread = (double)SymbolInfoInteger(_Symbol, SYMBOL_SPREAD) * SymbolInfoDouble(_Symbol, SYMBOL_POINT);
+         scan_features.candle_size = MathAbs(high[i] - low[i]);
+         scan_features.wick_upper = high[i] - MathMax(open[i], close[i]);
+         scan_features.wick_lower = MathMin(open[i], close[i]) - low[i];
+
+         // Write with action "SCAN"
+         // This will be picked up by Bridge -> gRPC -> Client
+         // Client will run "Scanner Model"
+         WriteSignalToFile("SCAN", close[i], scan_sl, scan_tp, "AI Scan", scan_features);
         }
      }
      
@@ -571,6 +657,7 @@ void WriteSignalToFile(string action, double price, double sl, double tp, string
   {
    datetime currentBarTime = iTime(_Symbol, _Period, 0);
    
+   // Prevent Duplicate Writes for same bar same action
    if(g_lastSignalTime == currentBarTime && 
       g_lastSignalAction == action && 
       g_lastSignalSymbol == _Symbol)
@@ -586,29 +673,32 @@ void WriteSignalToFile(string action, double price, double sl, double tp, string
    int file_handle = FileOpen(filename, FILE_WRITE|FILE_TXT|FILE_ANSI);
    if(file_handle != INVALID_HANDLE)
      {
+      // Updated JSON Format with ALL features
       string json = StringFormat(
          "{\"signal_id\":\"%s_%d\",\"symbol\":\"%s\",\"action\":\"%s\",\"price\":%.5f,"
          "\"sl\":%.5f,\"tp\":%.5f,\"comment\":\"%s\","
-         "\"ema_short\":%.5f,\"ema_long\":%.5f,\"atr\":%.5f,\"adx\":%.5f,\"center\":%.5f,"
+         "\"ema_short\":%.5f,\"ema_long\":%.5f,\"atr\":%.5f,\"adx\":%.5f,\"rsi\":%.5f,\"center\":%.5f,"
          "\"distance_ok\":%d,\"slope_ok\":%d,\"trend_filter_ok\":%d,\"htf_trend_ok\":%d,"
          "\"volatility_ok\":%d,\"chop_ok\":%d,\"spread_ok\":%d,"
          "\"bars_since_last\":%d,\"trend_direction\":%d,\"ema_cross_event\":%d,"
          "\"ema_spread\":%.5f,\"atr_percent\":%.4f,\"reclaim_state\":%d,"
          "\"is_reclaim_signal\":%d,\"price_vs_center\":%.5f,\"cloud_width\":%.5f,"
+         "\"tick_volume\":%I64d,\"spread\":%.5f,\"candle_size\":%.5f,\"wick_upper\":%.5f,\"wick_lower\":%.5f,"
          "\"timestamp\":%d}",
          _Symbol, (int)TimeCurrent(), _Symbol, action, price, sl, tp, comment,
-         features.ema_short, features.ema_long, features.atr, features.adx, features.center,
+         features.ema_short, features.ema_long, features.atr, features.adx, features.rsi, features.center,
          features.distance_ok, features.slope_ok, features.trend_filter_ok, features.htf_trend_ok,
          features.volatility_ok, features.chop_ok, features.spread_ok,
          features.bars_since_last, features.trend_direction, features.ema_cross_event,
          features.ema_spread, features.atr_percent, features.reclaim_state,
          features.is_reclaim_signal, features.price_vs_center, features.cloud_width,
+         features.tick_volume, features.spread, features.candle_size, features.wick_upper, features.wick_lower,
          (int)TimeCurrent()
       );
       FileWriteString(file_handle, json);
       FileClose(file_handle);
       
-      Print("📤 Signal written: ", action, " ", _Symbol, " @ ", price);
+      Print("📤 AI-Ready Signal written: ", action, " ", _Symbol, " @ ", price);
      }
    else
      {

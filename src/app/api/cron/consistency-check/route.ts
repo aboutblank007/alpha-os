@@ -32,7 +32,7 @@ export async function GET(request: Request) {
         }
 
         const mt5Positions = status.last_mt5_update.positions;
-        
+
         // 2. Get Supabase Open Trades
         const { data: dbTrades, error } = await supabase
             .from('trades')
@@ -46,21 +46,21 @@ export async function GET(request: Request) {
         // 3. Compare
         // Check for trades in DB that are NOT in MT5 (Ghost trades in DB)
         // We match by external_order_id (Position ID) or Ticket if stored
-        
+
         // Create a map of MT5 positions for O(1) lookup
         // Assuming ticket is unique. We might store ticket as external_ticket or in notes.
         // In our schema, we have external_order_id which usually maps to Position ID.
-        const mt5PositionIds = new Set(mt5Positions.map((p: { ticket: number }) => p.ticket.toString())); 
+        const mt5PositionIds = new Set(mt5Positions.map((p: { ticket: number }) => p.ticket.toString()));
 
         for (const dbTrade of dbTrades) {
             // Try to find matching MT5 position
             // We look for external_order_id (Position ID) or external_ticket
             let matchFound = false;
-            
+
             // Check via external_order_id (Preferred)
             if (dbTrade.external_order_id && mt5PositionIds.has(dbTrade.external_order_id)) {
                 matchFound = true;
-            } 
+            }
             // Fallback: Check via notes if ticket is embedded
             else if (dbTrade.notes && mt5Positions.some((p: { ticket: number }) => dbTrade.notes.includes(p.ticket.toString()))) {
                 matchFound = true;
@@ -73,7 +73,7 @@ export async function GET(request: Request) {
                     symbol: dbTrade.symbol,
                     reason: 'Open in DB but not found in MT5'
                 });
-                
+
                 // Auto-fix option: Mark as closed? Or just alert?
                 // For safety, we just log/alert first.
             }
@@ -82,8 +82,8 @@ export async function GET(request: Request) {
         // Check for trades in MT5 that are NOT in DB (Missing in DB)
         for (const mt5Pos of mt5Positions) {
             const ticket = mt5Pos.ticket.toString();
-            const existsInDb = dbTrades.some(t => 
-                t.external_order_id === ticket || 
+            const existsInDb = dbTrades.some(t =>
+                t.external_order_id === ticket ||
                 (t.notes && t.notes.includes(ticket))
             );
 
