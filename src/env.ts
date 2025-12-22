@@ -7,13 +7,14 @@ const envSchema = z.object({
 
     // MT5 Trading Bridge
     // Allow empty string to fallback to default, or use default if undefined
-    TRADING_BRIDGE_API_URL: z.string().url().optional().or(z.literal('')).transform(val => val || 'http://api.lootool.cn:8000'),
+    TRADING_BRIDGE_API_URL: z.string().optional().or(z.literal('')).transform(val => val || 'http://127.0.0.1:8000'),
 });
 
 const processEnv = {
     NEXT_PUBLIC_SUPABASE_URL: process.env.NEXT_PUBLIC_SUPABASE_URL,
     NEXT_PUBLIC_SUPABASE_ANON_KEY: process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY,
-    TRADING_BRIDGE_API_URL: process.env.TRADING_BRIDGE_API_URL,
+    // Support legacy env names for backward compatibility
+    TRADING_BRIDGE_API_URL: process.env.TRADING_BRIDGE_API_URL || process.env.BRIDGE_API_URL || process.env.NEXT_PUBLIC_BRIDGE_API_URL,
 };
 
 // Validate immediately

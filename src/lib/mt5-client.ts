@@ -120,4 +120,4 @@ export class MT5Client {
     }
 }
 
-export const mt5Client = new MT5Client(env.TRADING_BRIDGE_API_URL || 'http://localhost:8000');
+export const mt5Client = new MT5Client(env.TRADING_BRIDGE_API_URL);

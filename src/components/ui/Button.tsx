@@ -1,61 +1,47 @@
 "use client";
-import { cn } from "@/lib/utils";
-import React from "react";
 
-type Variant = "primary" | "secondary" | "outline" | "ghost" | "danger" | "success";
-type Size = "sm" | "md" | "lg";
+import React from "react";
+import { cn } from "@/lib/utils";
 
 interface ButtonProps extends React.ButtonHTMLAttributes<HTMLButtonElement> {
-  variant?: Variant;
-  size?: Size;
-  loading?: boolean;
-  leftIcon?: React.ReactNode;
-  rightIcon?: React.ReactNode;
+    variant?: "primary" | "secondary" | "ghost" | "danger" | "outline";
+    size?: "sm" | "md" | "lg" | "icon";
+    isLoading?: boolean;
 }
 
-const base = "inline-flex items-center justify-center rounded-xl font-medium transition-all focus:outline-none focus-visible:ring-2 focus-visible:ring-white/30 disabled:opacity-50 disabled:cursor-not-allowed";
+export const Button = React.forwardRef<HTMLButtonElement, ButtonProps>(
+    ({ className, variant = "primary", size = "md", isLoading, children, ...props }, ref) => {
 
-const variants: Record<Variant, string> = {
-  primary: "bg-accent-primary text-white hover:bg-accent-primary/90 shadow-lg shadow-accent-primary/20",
-  secondary: "bg-white/5 text-slate-200 hover:bg-white/10 border border-white/10",
-  outline: "border border-white/20 text-slate-200 hover:bg-white/5",
-  ghost: "text-slate-300 hover:bg-white/5",
-  danger: "bg-accent-danger text-white hover:bg-accent-danger/90",
-  success: "bg-accent-success text-white hover:bg-accent-success/90",
-};
+        const baseStyles = "inline-flex items-center justify-center rounded-lg font-medium transition-all duration-200 focus:outline-none focus:ring-2 focus:ring-primary/20 disabled:opacity-50 disabled:pointer-events-none active:scale-[0.98]";
 
-const sizes: Record<Size, string> = {
-  sm: "h-9 px-3 text-sm gap-2",
-  md: "h-11 px-4 text-sm gap-2",
-  lg: "h-12 px-5 text-base gap-3",
-};
+        const variants = {
+            primary: "bg-primary text-white hover:bg-primary/90 shadow-[0_0_15px_rgba(37,99,235,0.3)] hover:shadow-[0_0_25px_rgba(37,99,235,0.5)] border border-transparent",
+            secondary: "bg-bg-subtle text-text-secondary border border-border-subtle hover:text-white hover:border-border-active hover:bg-white/5",
+            ghost: "text-text-secondary hover:text-white hover:bg-white/5",
+            danger: "bg-danger/10 text-danger border border-danger/20 hover:bg-danger/20",
+            outline: "border border-border-subtle text-text-secondary hover:text-white hover:border-white/20 bg-transparent",
+        };
 
-export const Button = React.memo(function Button({ 
-  variant = "primary", 
-  size = "md", 
-  loading, 
-  leftIcon, 
-  rightIcon, 
-  children, 
-  className, 
-  ...props 
-}: ButtonProps) {
-  return (
-    <button
-      className={cn(base, variants[variant], sizes[size], className)}
-      type={props.type ?? "button"}
-      aria-busy={loading ? true : undefined}
-      {...props}
-    >
-      {leftIcon && <span className="mr-1.5">{leftIcon}</span>}
-      {loading && (
-        <span className="mr-2 inline-flex">
-          <span className="h-4 w-4 rounded-full border-2 border-white/40 border-t-white animate-spin"></span>
-        </span>
-      )}
-      {children}
-      {rightIcon && <span className="ml-1.5">{rightIcon}</span>}
-    </button>
-  );
-});
+        const sizes = {
+            sm: "h-8 px-3 text-xs",
+            md: "h-10 px-4 text-sm",
+            lg: "h-12 px-6 text-base",
+            icon: "h-9 w-9 p-0",
+        };
 
+        return (
+            <button
+                ref={ref}
+                className={cn(baseStyles, variants[variant], sizes[size], className)}
+                disabled={isLoading || props.disabled}
+                {...props}
+            >
+                {isLoading ? (
+                    <div className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin mr-2" />
+                ) : null}
+                {children}
+            </button>
+        );
+    }
+);
+Button.displayName = "Button";

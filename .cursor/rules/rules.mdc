@@ -1,0 +1,43 @@
+---
+alwaysApply: true
+---
+# Antigravity 全局智能体规则 (Global Agent Rules) v2.1
+
+## 0. 熵减法则 (Anti-Entropy / DRY Protocol) 【最高优先级】
+
+**核心指令：在编写每一行新代码之前，你必须通过工具检索项目现有的“资产”。严禁重复造轮子。**
+
+
+## 4. 严格文档与日志同步协议 (Documentation & Logging)
+
+为防止项目漂移，任何变更必须记录。
+
+### A. 全局流水账 (Universal Operation Log)
+
+- **目标文件**：`docs/DEVELOPMENT_LOG.md`
+- **触发条件**：任何代码修改、文件创建、Schema 变更。
+- **格式**：`- [YYYY-MM-DD HH:mm] [<Type>]: <File> - <Action>`
+
+
+## 7. 工业级代码标准 (Industrial Grade Standards)
+
+**核心指令：默认假设所有外部依赖（API、数据库、网络）都会失败。代码必须具备“反脆弱性”。**
+
+### A. 严禁裸奔 (No Silent Failures)
+
+- **禁止 `print()`**：Python 代码严禁使用 `print()` 调试。
+  - *必须*：使用 `loguru` 或标准 `logging` 库。
+  - *格式*：`logger.info("Strategy started", symbol="BTCUSD")`（必须包含上下文变量）。
+- **防御性编程**：
+  - 凡是涉及网络请求、文件读写、数据库操作，**必须**使用 `try/except` 包裹。
+  - **禁止**使用空的 `except: pass`。必须捕获具体异常并记录 Error Log。
+  - **重试机制**：对不稳定的外部调用（如 MT5 桥接、OpenAI API），必须引入重试逻辑（推荐 Python `tenacity` 库）。
+
+
+### C. 生产级交付 (Definition of Done)
+
+代码在输出前必须通过以下自我质问：
+
+1. **重启测试**：如果服务崩溃重启，这个状态会丢失吗？（如果会，需持久化到 Redis/DB）。
+2. **错误测试**：如果 API 超时，整个程序会崩溃退出吗？（如果是，请改为降级处理）。
+3. **日志测试**：出问题时，我能只看日志就定位原因吗？

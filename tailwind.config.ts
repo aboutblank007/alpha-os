@@ -1,4 +1,5 @@
 import type { Config } from "tailwindcss";
+import defaultTheme from "tailwindcss/defaultTheme";
 
 export default {
     content: [
@@ -8,6 +9,9 @@ export default {
     ],
     theme: {
         extend: {
+            fontFamily: {
+                sans: ["var(--font-inter)", ...defaultTheme.fontFamily.sans],
+            },
             screens: {
                 '3xl': '1920px',
             },

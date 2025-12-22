@@ -1,0 +1,19 @@
+{
+  "feature_cols": [
+    "qnn_prediction",
+    "atr",
+    "adx",
+    "rsi",
+    "volume_shock",
+    "volume_density",
+    "spread",
+    "tick_rate",
+    "bid_ask_imbalance",
+    "wick_ratio",
+    "candle_size"
+  ],
+  "n_qubits": 10,
+  "n_layers": 3,
+  "backend": "lightning.qubit",
+  "best_auc": 0.7499025008531175
+}

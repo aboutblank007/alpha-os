@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server';
+import { env } from '@/env';
 
-const BRIDGE_API_URL = process.env.TRADING_BRIDGE_API_URL || 'http://api.lootool.cn:8000';
+const BRIDGE_API_URL = env.TRADING_BRIDGE_API_URL;
 
 export async function POST(req: Request) {
   try {

@@ -1,3 +1,5 @@
+import { env } from '@/env';
+
 export interface TradeRequest {
     action: 'BUY' | 'SELL';
     symbol: string;
@@ -15,7 +17,7 @@ export interface BridgeResponse {
 export class BridgeClient {
     private baseUrl: string;
 
-    constructor(baseUrl: string = 'http://localhost:8000') {
+    constructor(baseUrl: string = env.TRADING_BRIDGE_API_URL) {
         this.baseUrl = baseUrl;
     }
 

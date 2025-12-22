@@ -40,6 +40,7 @@ coverage/
 
 # 临时文件
 *.log
+!quantum-engine/reports/*.log
 *.tmp
 *.bak
 *.backup

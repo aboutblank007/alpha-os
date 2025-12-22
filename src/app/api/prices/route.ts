@@ -97,26 +97,13 @@ export async function GET(request: Request) {
     }
 
     // Mock Fallback Logic
-    console.warn('使用模拟数据作为兜底');
-    const mockPrices: Record<string, number> = {};
-    symbols.forEach(symbol => {
-      const clean = normalizeSymbol(symbol);
-      if (clean.includes('JPY')) {
-        mockPrices[clean] = 150 + Math.random() * 10;
-      } else if (clean.includes('XAU')) {
-        mockPrices[clean] = 2600 + Math.random() * 100;
-      } else if (clean.includes('BTC')) {
-        mockPrices[clean] = 95000 + Math.random() * 2000;
-      } else {
-        mockPrices[clean] = 1.05 + Math.random() * 0.1;
-      }
-    });
-
-    return NextResponse.json({
-      prices: mockPrices,
-      timestamp: new Date().toISOString(),
-      source: 'mock-fallback',
-    });
+    // Mock Fallback Logic - DISABLED for Production Clarity
+    // The user wants "Sync", not fake data. Returning error allows frontend to show "Disconnected" state.
+    console.warn('MT5 Bridge failed. Returning explicit error to frontend.');
+    return NextResponse.json(
+      { error: 'MT5 Connection Failed', source: 'bridge-error' },
+      { status: 503 }
+    );
 
   } catch (error: unknown) {
     console.error('获取价格失败:', error);
@@ -217,14 +204,12 @@ export async function POST(request: Request) {
     }
 
     // Mock Fallback
-    const mockCandles = generateMockCandles(mt5Symbol, granularity, count);
-    return NextResponse.json({
-      instrument: mt5Symbol,
-      candles: mockCandles,
-      granularity,
-      count: mockCandles.length,
-      source: 'mock-fallback'
-    });
+    // Mock Fallback - DISABLED
+    console.warn('MT5 Bridge History failed. Returning explicit error.');
+    return NextResponse.json(
+      { error: 'MT5 History Unavailable', source: 'bridge-error', candles: [] },
+      { status: 503 }
+    );
 
   } catch (error: unknown) {
     console.error('获取蜡烛图数据失败:', error);

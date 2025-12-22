@@ -1,47 +1,34 @@
-"use client";
-import { cn } from "@/lib/utils";
 import React from "react";
+import { cn } from "@/lib/utils";
 
-interface InputProps extends React.InputHTMLAttributes<HTMLInputElement> {
-  label?: string;
-  description?: string;
-  error?: string;
+export interface InputProps extends React.InputHTMLAttributes<HTMLInputElement> {
+    leftIcon?: React.ReactNode;
 }
 
-export function Input({ id, label, description, error, className, ...props }: InputProps) {
-  const autoId = React.useId();
-  const inputId = id ?? autoId;
-  const descId = description ? `${inputId}-desc` : undefined;
-  const errId = error ? `${inputId}-err` : undefined;
-  const describedBy = [descId, errId].filter(Boolean).join(" ") || undefined;
-  return (
-    <div className="space-y-2">
-      {label && (
-        <label htmlFor={inputId} className="text-sm font-medium text-slate-300">
-          {label}
-        </label>
-      )}
-      <input
-        id={inputId}
-        className={cn(
-          "w-full rounded-xl bg-white/5 border border-white/10 px-4 py-3 text-slate-200 placeholder:text-slate-500 focus:outline-none focus:ring-2 focus:ring-white/20",
-          error && "border-accent-danger",
-          className
-        )}
-        aria-invalid={error ? true : undefined}
-        aria-describedby={describedBy}
-        {...props}
-      />
-      {description && (
-        <p id={descId} className="text-xs text-slate-500">
-          {description}
-        </p>
-      )}
-      {error && (
-        <p id={errId} className="text-xs text-accent-danger">
-          {error}
-        </p>
-      )}
-    </div>
-  );
-}
+export const Input = React.forwardRef<HTMLInputElement, InputProps>(
+    ({ className, leftIcon, ...props }, ref) => {
+        return (
+            <div className="relative flex items-center w-full group">
+                {leftIcon && (
+                    <div className="absolute left-3 text-text-muted group-focus-within:text-primary transition-colors">
+                        {leftIcon}
+                    </div>
+                )}
+                <input
+                    className={cn(
+                        "flex h-9 w-full rounded-lg border border-border-subtle bg-bg-subtle px-3 py-1 text-sm shadow-sm transition-colors",
+                        "file:border-0 file:bg-transparent file:text-sm file:font-medium",
+                        "placeholder:text-text-muted text-text-primary",
+                        "focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-primary focus-visible:border-primary/50",
+                        "disabled:cursor-not-allowed disabled:opacity-50",
+                        leftIcon && "pl-9",
+                        className
+                    )}
+                    ref={ref}
+                    {...props}
+                />
+            </div>
+        );
+    }
+);
+Input.displayName = "Input";

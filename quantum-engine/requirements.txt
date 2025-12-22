@@ -1,0 +1,10 @@
+numpy>=1.23,<2.0
+pandas>=1.5
+scikit-learn>=1.2
+torch>=2.0
+# 量子栈：Python3.9 兼容 + 避免 autoray API 漂移导致运行时崩溃
+pennylane==0.38.0
+pennylane-lightning==0.38.0
+autoray==0.6.12
+
+

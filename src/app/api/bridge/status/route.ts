@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server';
+import { env } from '@/env';
 
-const BRIDGE_API_URL = process.env.TRADING_BRIDGE_API_URL || 'http://api.lootool.cn:8000';
+const BRIDGE_API_URL = env.TRADING_BRIDGE_API_URL;
 
 export async function GET() {
   try {
@@ -24,8 +25,8 @@ export async function GET() {
   } catch (error) {
     console.error('Bridge status check failed:', error);
     return NextResponse.json(
-      { 
-        bridge_status: 'disconnected', 
+      {
+        bridge_status: 'disconnected',
         error: error instanceof Error ? error.message : 'Unknown error',
         last_mt5_update: {},
         pending_commands: 0
