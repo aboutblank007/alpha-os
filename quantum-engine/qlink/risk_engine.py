@@ -132,7 +132,76 @@ class ATRCalculator:
         return self.atr_values.get(symbol, 1.0)
 
 
-# ================== Meta-Labeling 模型 ==================
+# ================== Meta-Labeling 模型 (次级分类器) ==================
+
+class XGBoostMetaLabeler:
+    """
+    XGBoost Meta-Labeling 模型
+    
+    作为次级分类器，预测 Alpha 信号在当前市场微观结构下的获胜概率
+    输入特征: ATR, 成交量密度, 量子模型预测值, 预测置信度, DOM 压力
+    """
+    
+    def __init__(self, model_dir: Path):
+        self.model_dir = model_dir
+        self.model = None
+        self.threshold = META_THRESHOLD
+        
+        try:
+            import xgboost as xgb
+            self._has_xgb = True
+        except ImportError:
+            self._has_xgb = False
+            logger.warning("未检测到 xgboost 库, 元标记将降级回中性预测")
+            
+        self._load_artifacts()
+    
+    def _load_artifacts(self) -> None:
+        """加载训练好的 XGBoost 模型"""
+        if not self._has_xgb:
+            return
+            
+        model_path = self.model_dir / "meta_labeling_xgb.json"
+        if not model_path.exists():
+            logger.warning("XGBoost Meta-Labeling 模型不存在: %s", model_path)
+            return
+            
+        try:
+            import xgboost as xgb
+            self.model = xgb.Booster()
+            self.model.load_model(str(model_path))
+            logger.info("✅ XGBoost Meta-Labeling 模型加载完成")
+        except Exception as e:
+            logger.error("加载 XGBoost 失败: %s", e)
+            self.model = None
+
+    def predict(self, signal: AlphaSignal, market_state: Dict[str, float]) -> float:
+        """预测信号可靠概率"""
+        if not self.model or not self._has_xgb:
+            # 降级方案：如果没有模型，使用 Alpha 信号自身的置信度
+            return float(signal.confidence) if signal.confidence else 0.5
+        
+        try:
+            import xgboost as xgb
+            # 1. 提取核心特征 (对齐研究报告)
+            # 特征向量: [atr_ratio, vol_density, pred_abs, confidence, dom_pressure]
+            atr_ratio = market_state.get("atr", 0.0) / (signal.tick_data.mid_price + 1e-9)
+            vol_density = signal.tick_data.vol_density
+            pred_abs = abs(signal.prediction)
+            confidence = signal.confidence
+            dom_pressure = market_state.get("dom_pressure", 0.0)
+            
+            features = np.array([[atr_ratio, vol_density, pred_abs, confidence, dom_pressure]])
+            dmatrix = xgb.DMatrix(features)
+            
+            # 2. 预测
+            prob = self.model.predict(dmatrix)[0]
+            return float(prob)
+                
+        except Exception as e:
+            logger.error("XGBoost 推理失败: %s", e)
+            return 0.5
+
 
 class QuantumMetaLabeler:
     """
@@ -397,7 +466,8 @@ class RiskEngine:
         self.command_port = command_port
         
         # 组件
-        self.meta_labeler: Optional[QuantumMetaLabeler] = None
+        self.meta_labeler: Optional[XGBoostMetaLabeler] = None
+        self.quantum_meta: Optional[QuantumMetaLabeler] = None # 保留量子版本作为备选
         self.position_sizer: Optional[PositionSizer] = None
         self.lvar_controller: Optional[LiquidityRiskController] = None
         self.atr_calculator: Optional[ATRCalculator] = None
@@ -415,14 +485,16 @@ class RiskEngine:
         # 持仓追踪 (增强版)
         # {symbol: {"side", "entry_price", "entry_confidence", "entry_time", "current_sl", "lots", "bars_held"}}
         self.positions: Dict[str, Dict[str, Any]] = {}
+        self._last_entry_time: Dict[str, float] = {}  # 上次开仓时间（冷却用）
     
     def start(self) -> None:
         """启动服务"""
         logger.info("Risk Engine 启动中...")
         
         # 1. 初始化风控组件
-        # 直接在 self.model_dir (如 models/xau) 中查找量子 Meta 产物
-        self.meta_labeler = QuantumMetaLabeler(self.model_dir)
+        # 优先使用 XGBoost 元标记
+        self.meta_labeler = XGBoostMetaLabeler(self.model_dir)
+        self.quantum_meta = QuantumMetaLabeler(self.model_dir)
         self.position_sizer = PositionSizer()
         self.lvar_controller = LiquidityRiskController()
         self.atr_calculator = ATRCalculator(period=14)
@@ -441,7 +513,7 @@ class RiskEngine:
         
         # Command Bus (PUSH) - Python bind，EA connect 过来
         self.command_socket = self.context.socket(zmq.PUSH)
-        self.command_socket.setsockopt(zmq.SNDHWM, 100)
+        self.command_socket.setsockopt(zmq.SNDHWM, 1000)  # 扩容至 1000 以缓解高频信号拥堵
         self.command_socket.setsockopt(zmq.LINGER, 0)
         cmd_addr = f"tcp://0.0.0.0:{self.command_port}"
         self.command_socket.bind(cmd_addr)
@@ -476,6 +548,10 @@ class RiskEngine:
                             if hasattr(decision, 'close_order') and decision.close_order:
                                 self._send_order(decision.close_order)
                             self._send_order(decision.order)
+                            
+                            # 记录开仓时间，用于静默期
+                            if decision.order.action == OrderAction.OPEN:
+                                self._last_entry_time[decision.symbol] = time.time()
                 except zmq.Again:
                     pass  # 超时，继续
                 
@@ -563,9 +639,18 @@ class RiskEngine:
                         close_order=close_order,
                     )
         
-        # ========== 第一道防线：Meta-Labeling ==========
-        meta_prob = self.meta_labeler.predict(signal, market_state)
-        logger.info("Meta-Labeling: prob=%.3f threshold=%.2f", meta_prob, META_THRESHOLD)
+        # ========== 第一道防线：Meta-Labeling (Quantum) ==========
+        # 优先使用 Quantum Meta-Labeling (符合 XAUUSD_Quantum_Strategic_Research.md)
+        qt_prob = self.quantum_meta.predict(signal, market_state)
+        
+        # Shadow Mode: 记录 XGBoost 预测值用于对比
+        xgb_prob = self.meta_labeler.predict(signal, market_state)
+        
+        # 决策使用量子概率
+        meta_prob = qt_prob
+        
+        logger.info("Meta-Labeling (Quantum): prob=%.3f (XGB Shadow: %.3f) threshold=%.2f", 
+                    qt_prob, xgb_prob, META_THRESHOLD)
         
         if meta_prob < META_THRESHOLD:
             logger.info("信号被 Meta-Labeling 拒绝: prob=%.3f < %.2f", meta_prob, META_THRESHOLD)
@@ -615,6 +700,36 @@ class RiskEngine:
             spread=tick.spread_points,
         )
         base_c, spread_c, size_c = cost_breakdown
+        
+        # 1. 检查静默期 (Cooldown)
+        now = time.time()
+        last_time = self._last_entry_time.get(signal.symbol, 0)
+        # 如果是同方向信号，且距离上次开仓不足 10 秒，则跳过
+        if signal.direction == OrderSide.SELL and now - last_time < 10.0:
+            return RiskDecision(
+                timestamp=signal.timestamp,
+                symbol=symbol,
+                action="PASS",
+                meta_prob=meta_prob,
+                position_size=0,
+                kelly_fraction=0,
+                vol_scalar=1.0,
+                lvar_cost=0,
+                alpha_signal=signal,
+            )
+        # 多头同理
+        if signal.direction == OrderSide.BUY and now - last_time < 10.0:
+            return RiskDecision(
+                timestamp=signal.timestamp,
+                symbol=symbol,
+                action="PASS",
+                meta_prob=meta_prob,
+                position_size=0,
+                kelly_fraction=0,
+                vol_scalar=1.0,
+                lvar_cost=0,
+                alpha_signal=signal,
+            )
         
         # 修正：将每单位预期收益转换为整个仓位的总预期收益
         contract_size = 100 if "XAU" in symbol else 1.0  # 黄金标准合约 100 盎司
@@ -741,7 +856,9 @@ class RiskEngine:
             # 匹配品种和魔术数
             if p.symbol == symbol and p.magic == MAGIC_NUMBER:
                 # 如果经纪商端的止损与我们计算出的棘轮止损不一致，则发起修改
-                if abs(p.sl - new_sl) > 1e-5:
+                # 兼容性修复：处理 MT5 端 sl 为 None 的情况
+                broker_sl = p.sl or 0.0
+                if abs(broker_sl - new_sl) > 1e-5:
                     modify_order = OrderCommand(
                         uuid=str(uuid.uuid4())[:8],
                         action=OrderAction.MODIFY,

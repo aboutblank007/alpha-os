@@ -12,6 +12,7 @@
 
 set -e
 
+PIDS=""
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 QUANTUM_ENGINE_DIR="$(dirname "$SCRIPT_DIR")"
 MODEL_BASE_DIR="${QUANTUM_ENGINE_DIR}/models"
@@ -42,11 +43,13 @@ echo ""
 mkdir -p "$LOG_DIR"
 > "$COMBINED_LOG"
 
-# ================== 环境配置 ==================
-export OMP_NUM_THREADS=6
+# ================== 环境配置 (M2 Pro 优化) ==================
+export OMP_NUM_THREADS=8
 export OMP_PROC_BIND=true
 export KMP_BLOCKTIME=0
-export PENNYLANE_NUM_THREADS=6
+export PENNYLANE_NUM_THREADS=8
+export ZMQ_HOST="${MT5_HOST}"
+export PYTHONPATH="${QUANTUM_ENGINE_DIR}:${PYTHONPATH}"
 
 # 激活虚拟环境
 VENV_PATH="${QUANTUM_ENGINE_DIR}/.venv"
@@ -58,19 +61,30 @@ else
     exit 1
 fi
 
-pip install pyzmq -q 2>/dev/null || true
+pip install pyzmq fastapi uvicorn -q 2>/dev/null || true
+
+# ================== 启动 API 网关 ==================
+echo "🚀 启动 API Gateway..."
+python3 -u api_gateway.py --host 0.0.0.0 --port 8000 2>&1 | while read -r line; do echo "[Gateway] $line" >> "$COMBINED_LOG"; done &
+PID_GATEWAY=$!
+PIDS="$PIDS $PID_GATEWAY"
+echo "   Gateway PID: $PID_GATEWAY ✅"
+sleep 1
 
 # ================== 模型检查函数 ==================
 check_model() {
     local model_dir=$1
-    if [ -f "${model_dir}/quantum_regressor_best.pt" ]; then
-        return 0
-    fi
-    return 1
+    local required_files=("artifacts.json" "feature_transformer.pkl" "target_scaler.pkl" "quantum_regressor_best.pt")
+    
+    for f in "${required_files[@]}"; do
+        if [ ! -s "${model_dir}/${f}" ]; then
+            return 1
+        fi
+    done
+    return 0
 }
 
 # ================== 确定启动品种 ==================
-PIDS=""
 cd "$SCRIPT_DIR"
 
 start_engines() {
@@ -81,8 +95,9 @@ start_engines() {
     local command_port=$5
     local market_port=$6
     
+    # 检查模型完整性
     if ! check_model "$model_dir"; then
-        echo "❌ ${symbol_name} 模型不存在: ${model_dir}"
+        echo "❌ ${symbol_name} 模型文件不完整或损坏: ${model_dir}"
         return 1
     fi
     
@@ -101,8 +116,9 @@ start_engines() {
                 echo "────────────────────────────────────────" | tee -a "$COMBINED_LOG"
             fi
         done &
-    PIDS="$PIDS $!"
-    echo "   Alpha Engine PID: $! ✅"
+    PID_ALPHA=$!
+    PIDS="$PIDS $PID_ALPHA"
+    echo "   Alpha Engine PID: $PID_ALPHA ✅"
     
     sleep 0.5
     
@@ -114,8 +130,17 @@ start_engines() {
                 echo "════════════════════════════════════════" | tee -a "$COMBINED_LOG"
             fi
         done &
-    PIDS="$PIDS $!"
-    echo "   Risk Engine PID: $! ✅"
+    PID_RISK=$!
+    PIDS="$PIDS $PID_RISK"
+    echo "   Risk Engine PID: $PID_RISK ✅"
+    
+    # 尝试应用 macOS taskpolicy 优先级优化 (针对 M2 Pro 异构核心)
+    if [[ "$OSTYPE" == "darwin"* ]]; then
+        # 将 Alpha 引擎设为高优先级 (User Interactive)
+        taskpolicy -t 5 -p $PID_ALPHA 2>/dev/null || true
+        # 将 Risk 引擎设为正常优先级
+        taskpolicy -t 3 -p $PID_RISK 2>/dev/null || true
+    fi
     
     return 0
 }
@@ -125,18 +150,10 @@ STARTED=0
 
 # 单品种模式：只启动 XAUUSD
 if [ "$SYMBOL_MODE" = "all" ] || [ "$SYMBOL_MODE" = "xau" ]; then
-    if start_engines "XAU" "XAUUSD" "${MODEL_BASE_DIR}/xau" 5560 5558 5557; then
+    if start_engines "XAU" "XAUUSD" "${MODEL_BASE_DIR}/xau_v2_alpha101" 5560 5558 5557; then
         STARTED=$((STARTED + 1))
     fi
 fi
-
-# 如需添加 BTC，取消下面注释（需要独立端口配置）
-# sleep 1
-# if [ "$SYMBOL_MODE" = "all" ] || [ "$SYMBOL_MODE" = "btc" ]; then
-#     if start_engines "BTC" "BTCUSD" "${MODEL_BASE_DIR}/btc" 5561 5568 5567; then
-#         STARTED=$((STARTED + 1))
-#     fi
-# fi
 
 if [ $STARTED -eq 0 ]; then
     echo "❌ 没有启动任何品种"

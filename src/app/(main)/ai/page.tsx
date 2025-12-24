@@ -7,19 +7,17 @@ import {
     Brain, Settings, Activity, Shield, Zap, RefreshCw, 
     TrendingUp, TrendingDown, Minus, AlertTriangle, 
     ToggleLeft, ToggleRight, ChevronDown, ChevronUp,
-    Clock, Target, Layers, Database, Bot, Cpu
+    Clock, Target, Layers, Database, Bot, Cpu, Gauge
 } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { GradientNormChart } from "@/components/charts/GradientNormChart";
+import { useQuantumStore } from "@/store/useQuantumStore";
+import { useQuantumSocket } from "@/hooks/useQuantumSocket";
+import type { AIConfig, AILog } from "@/types/quantum";
 
 // Types
-interface AISettings {
-    id: number;
-    risk_off: boolean;
-    min_confidence: number;
-    max_vol_mult: number;
-    mode: string;
-    updated_at: string;
-}
+// Re-export as AISettings for compatibility or alias
+type AISettings = AIConfig & { id?: number };
 
 interface AutomationRule {
     id: string;
@@ -37,20 +35,6 @@ interface AutomationRule {
     max_vol_mult: number;
     risk_off: boolean;
     updated_at: string;
-}
-
-interface AILog {
-    id: string;
-    symbol: string;
-    action: string;
-    price: number;
-    timestamp: string;
-    resultProfit: number | null;
-    aiScore: number;
-    regime: string;
-    metaProb: number;
-    dqnAction: number;
-    quantumPolicy: number[];
 }
 
 // 状态标签组件
@@ -449,6 +433,11 @@ function ModelStatusPanel() {
 }
 
 export default function AIManagementPage() {
+    // Quantum Store & Socket Integration
+    const { connect } = useQuantumSocket();
+    const aiLogs = useQuantumStore(s => s.aiLogs);
+    const aiConfig = useQuantumStore(s => s.aiConfig);
+
     const [settings, setSettings] = useState<AISettings | null>(null);
     const [rules, setRules] = useState<AutomationRule[]>([]);
     const [logs, setLogs] = useState<AILog[]>([]);
@@ -457,6 +446,22 @@ export default function AIManagementPage() {
     const [logFilter, setLogFilter] = useState<'ALL' | 'BUY' | 'SELL' | 'WAIT'>('ALL');
     const [autoRefresh, setAutoRefresh] = useState(true);
     
+    // Use store data if available (Live Mode), fallback to fetched data
+    const activeSettings = aiConfig ? { ...aiConfig, id: 1 } : settings;
+    const activeLogs = aiLogs.length > 0 ? aiLogs : logs;
+    
+    // Recalculate stats for live logs
+    const activeStats = aiLogs.length > 0 ? {
+        total: aiLogs.length,
+        buyCount: aiLogs.filter(l => l.action === "BUY").length,
+        sellCount: aiLogs.filter(l => l.action === "SELL").length,
+        waitCount: aiLogs.filter(l => l.action === "WAIT").length,
+    } : logStats;
+
+    const filteredActiveLogs = activeLogs.filter(log => 
+        logFilter === 'ALL' || log.action === logFilter
+    );
+
     // 获取配置
     const fetchConfig = useCallback(async () => {
         try {
@@ -575,7 +580,7 @@ export default function AIManagementPage() {
                         <Database size={20} className="text-primary" />
                     </div>
                     <div>
-                        <div className="text-lg font-bold">{logStats.total}</div>
+                        <div className="text-lg font-bold">{activeStats.total}</div>
                         <div className="text-[10px] text-text-muted">今日信号</div>
                     </div>
                 </GlassCard>
@@ -584,7 +589,7 @@ export default function AIManagementPage() {
                         <TrendingUp size={20} className="text-success" />
                     </div>
                     <div>
-                        <div className="text-lg font-bold text-success">{logStats.buyCount}</div>
+                        <div className="text-lg font-bold text-success">{activeStats.buyCount}</div>
                         <div className="text-[10px] text-text-muted">买入信号</div>
                     </div>
                 </GlassCard>
@@ -593,12 +598,61 @@ export default function AIManagementPage() {
                         <TrendingDown size={20} className="text-danger" />
                     </div>
                     <div>
-                        <div className="text-lg font-bold text-danger">{logStats.sellCount}</div>
+                        <div className="text-lg font-bold text-danger">{activeStats.sellCount}</div>
                         <div className="text-[10px] text-text-muted">卖出信号</div>
                     </div>
                 </GlassCard>
             </div>
             
+            {/* [Ref: 交易系统前端功能设计.MD] 5.1 & 5.2 Quantum Telemetry Panel */}
+            <div className="grid grid-cols-12 gap-3 shrink-0 h-48">
+                <GlassCard className="col-span-8 p-4 flex flex-col relative overflow-hidden">
+                    <div className="absolute top-0 right-0 p-4 opacity-5 pointer-events-none">
+                        <Activity size={100} />
+                    </div>
+                    <div className="flex items-center justify-between mb-2">
+                        <h3 className="text-sm font-bold flex items-center gap-2">
+                            <Activity size={16} className="text-primary" />
+                            量子梯度流形 (Gradient Manifold)
+                        </h3>
+                        <div className="flex items-center gap-2">
+                            <span className="text-[10px] text-text-muted bg-bg-subtle px-2 py-1 rounded border border-white/5">
+                                diff_method="adjoint"
+                            </span>
+                            <span className="text-[10px] text-text-muted bg-bg-subtle px-2 py-1 rounded border border-white/5">
+                                float64
+                            </span>
+                        </div>
+                    </div>
+                    <div className="flex-1 w-full min-h-0">
+                        <GradientNormChart height={130} />
+                    </div>
+                </GlassCard>
+                
+                <GlassCard className="col-span-4 p-4 flex flex-col relative overflow-hidden">
+                     <div className="absolute top-0 right-0 p-4 opacity-5 pointer-events-none">
+                        <Gauge size={80} />
+                    </div>
+                    <h3 className="text-sm font-bold flex items-center gap-2 mb-4">
+                        <Gauge size={16} className="text-primary" />
+                        置信度分布 (Confidence Fan)
+                    </h3>
+                    <div className="flex-1 flex flex-col justify-center gap-4">
+                         {/* Mock Fan Chart Visualization */}
+                         <div className="relative h-24 w-full flex items-end justify-center gap-1">
+                             <div className="w-8 bg-primary/20 h-[60%] rounded-t mx-auto absolute bottom-0 left-1/2 -translate-x-1/2 blur-sm"></div>
+                             <div className="w-16 bg-primary/10 h-[80%] rounded-t mx-auto absolute bottom-0 left-1/2 -translate-x-1/2 blur-md"></div>
+                             
+                             {/* Central high confidence spine */}
+                             <div className="z-10 w-2 bg-primary h-[90%] rounded-t mx-auto shadow-[0_0_10px_var(--color-primary)]"></div>
+                         </div>
+                         <div className="text-center text-[10px] text-text-muted">
+                            <span className="text-primary font-bold">Low Entropy</span> (High Confidence)
+                         </div>
+                    </div>
+                </GlassCard>
+            </div>
+
             {/* 主要内容区域 */}
             <div className="grid grid-cols-12 gap-4 flex-1 min-h-0">
                 {/* 左侧：配置面板 */}
@@ -612,7 +666,7 @@ export default function AIManagementPage() {
                             </CardTitle>
                         </CardHeader>
                         <CardContent className="p-0">
-                            <AIConfigPanel settings={settings} onUpdate={updateSettings} />
+                            <AIConfigPanel settings={activeSettings} onUpdate={updateSettings} />
                         </CardContent>
                     </GlassCard>
                     
@@ -668,7 +722,7 @@ export default function AIManagementPage() {
                     </div>
                     
                     <CardContent className="p-0 flex-1 overflow-auto">
-                        <AILogList logs={logs} />
+                        <AILogList logs={filteredActiveLogs} />
                     </CardContent>
                 </GlassCard>
                 

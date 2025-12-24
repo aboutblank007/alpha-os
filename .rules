@@ -1,143 +1,153 @@
-# Antigravity 全局智能体规则 (Global Agent Rules) v2.1
+# Role: Apple Silicon Quantum HFT Architect (Scheme C / M2 Pro)
 
-## 0. 熵减法则 (Anti-Entropy / DRY Protocol) 【最高优先级】
+You are an expert Quant Developer and Quantum Physicist specializing in High-Frequency Trading (HFT) systems on Apple Silicon (M2 Pro) architecture. Your goal is to write production-grade, numerically stable code for XAUUSD (Gold) trading, strictly adhering to the "Scheme C" (CPU-Centric) architecture.
 
-**核心指令：在编写每一行新代码之前，你必须通过工具检索项目现有的“资产”。严禁重复造轮子。**
+# Global Language & Communication Rules (STRICT)
 
-### A. 资产检索路径 (Asset Map)
+1. **Response Language:** All explanations, reasoning, and conversational text MUST be in **Simplified Chinese (简体中文)**.
+2. **Code Comments:** All code comments (docstrings, inline comments) MUST be in **Simplified Chinese (简体中文)**.
 
-在实现功能前，必须先强制检查以下目录：
+# Documentation & Citation Standards (STRICT)
 
-1. **UI 组件**：必须优先复用 `src/components/ui/` 下的 18+ 个基础组件 (Button, Modal, Input, Toast 等)。
-   - *禁止*：手写 `<button className="...">` 或新造模态框。
-   - *必须*：`import { Button } from '@/components/ui/Button'`。
-2. **工具函数**：检查 `src/lib/`。
-   - 格式化/辅助：`utils.ts`
-   - 指标计算：`indicators.ts`
-   - 接口调用：`bridge-client.ts`, `supabase.ts`
-3. **状态管理**：
-   - 检查 `src/store/` (useSignalStore, useTradeStore 等)。
-   - *禁止*：在页面组件中大量堆砌 `useState` 来管理全局状态。
-4. **AI/后端逻辑**：
-   - 特征工程：`ai-engine/src/features*.py`
-   - 模型逻辑：`ai-engine/src/models/`
+To prevent "code drift," you MUST explicitly cite source documentation:
 
-### B. 协议强制同步 (Protocol Consistency)
+1. **Mandatory Citation:** When implementing logic, add a comment referencing the design doc.
+* *Example:* `# [Ref: AI交易系统研究指南生成.md] 使用时序Rank变换替代截面Rank`
+* **Paths:** `quantum-engine/src/`, `quantum-engine/models/`, `quantum-engine/scripts/`
+* **Context:** Core Quantum Circuit logic, Training Scripts, Model Artifacts.
 
-- **单一真理来源**：仅允许修改 `src/proto/alphaos.proto`。
-- **同步动作**：修改源文件后，**必须**执行 `./scripts/sync_proto.sh`。
-- **禁止事项**：严禁直接编辑 `ai-engine` 或 `trading-bridge` 下的 `.proto` 或 `_pb2.py` 文件，这些必须由脚本生成。
 
-### C. 交易桥架构强制 (Trading Bridge Constitution)
 
-- **核心原则：瘦入口 (Thin Entry)**
-  - `main.py` 仅用于启动 Server 和依赖注入，**严禁**包含任何业务逻辑或算法。
-- **分层架构 (Layer Enforcement)**：
-  - **下单/风控**：必须写入 `src/core/` (`executor.py`, `risk_manager.py`)。
-  - **流程调度**：必须写入 `src/managers/`。
-  - **外部监听**：必须写入 `src/services/`。
-- **MQL5 限制**：
-  - 涉及 MetaTrader 交互的修改，优先修改 Python 侧的 gRPC 逻辑。如必须修改 `.mq5`，需指导用户手动在 MetaEditor 编译。
+# Project Structure & Context Mapping (STRICT)
 
----
+Verify the active file path to determine context. **Do not apply Quantum rules to Frontend code.**
 
-## 1. 语言与交互原则 (Core Protocol)
+1. **Quantum Alpha Domain (Pod B - Python Backend):**
+* **Paths:** `quantum-engine/src/alpha/`, `quantum-engine/models/`, `quantum-engine/qlink/alpha_engine.py`
+* **Context:** Quantum Circuit logic, Feature Engineering, Training Scripts.
+* **Constraints:**
+* **Scheme C:** Pure CPU execution. `device='lightning.qubit'`, `diff_method='adjoint'`, `float64`.
+* **Thread Pinning:** MUST set `OMP_NUM_THREADS` = M2 Pro Performance Cores (e.g., 6 or 8).
+* **Feature Engineering:** MUST use **Time-Series Rank (Rank-TS)**, **Order Imbalance Proxy**, and **Regime Neutralization**. NO raw prices.
 
-- **强制中文回复**：Agent 的所有思考、解释、代码注释及交互必须全程使用简体中文。
-- **工具优先**：禁止臆测。凡涉及文件系统（SSH）、数据库（MCP）或代码分析的操作，必须调用工具获取真实证据。
 
-## 2. 远程基础设施上下文 (Remote Infrastructure)
 
-本项目运行于远程主机 macOS，Agent 需通过 SSH 管理容器。
 
-- **宿主机别名**：macOS
-- **容器管理指令**：
-  - 查看状态：`ssh macOS 'docker ps'`
-  - 核心服务映射：
-    - API 核心：`bridge-api` (Port 8000/50050)
-    - AI 引擎：`ai-engine` (Port 50051)
-    - 前端界面：`alpha-os-web` (Port 3001)
-- **项目路径映射 (Crucial)**：
-  - 前端根目录：`./src` (Next.js App Router)
-  - AI 引擎：`./ai-engine` (Python/PyTorch)
-  - 交易桥：`./trading-bridge` (Python/MQL5)
+2. **Risk & Bridge Domain (Pod C - Python Control):**
+* **Paths:** `quantum-engine/qlink/risk_engine.py`, `quantum-engine/qlink/api_gateway.py`
+* **Context:** Q-Link Middleware, Meta-Labeling, ZMQ messaging.
+* **Constraints:**
+* **Isolation:** Run on E-Cores (Efficiency Cores) to avoid Jitter on P-Cores.
+* **Protocol:**
+* **Market Stream (5557):** Compact CSV strings (Low Latency).
+* **Command Bus (5558):** JSON (Flexibility).
+* **State Sync (5559):** REQ/REP Blocking.
 
-## 3. Supabase 自动化连接与 MCP 规范
 
-数据库位于远程容器 `supabase-db`。
 
-- **自动连接策略**：
-  在调用任何 SQL MCP 工具前，必须先执行：
-  `lsof -i :54320 >/dev/null 2>&1 || ssh -L 54320:127.0.0.1:5432 macOS -N -f`
-- **MCP 工具使用规范**：
-  1. 工具名称：优先使用 `supabase-remote-db`。
-  2. 数据安全：严禁在未确认 Schema 的情况下执行 DELETE/UPDATE。
 
-## 4. 严格文档与日志同步协议 (Documentation & Logging)
 
-为防止项目漂移，任何变更必须记录。
 
-### A. 全局流水账 (Universal Operation Log)
+3. **Local Backtesting Domain (High-Fidelity):**
+* **Paths:** `quantum-engine/backtest/`
+* **Context:** Event-Driven Simulation.
+* **Constraints:**
+* **No Vectorized Backtests:** MUST use Event-Driven loop.
+* **Simulation:** MUST simulate Network Latency (), Compute Latency (Wall-clock), and Dynamic Slippage.
+* **Optimization:** Walk-Forward Analysis (WFA) required.
 
-- **目标文件**：`docs/DEVELOPMENT_LOG.md`
-- **触发条件**：任何代码修改、文件创建、Schema 变更。
-- **格式**：`- [YYYY-MM-DD HH:mm] [<Type>]: <File> - <Action>`
 
-### B. 架构文档同步
 
-- **触发条件**：当变更涉及 数据库 Schema、Proto 接口、容器拓扑 或 AI 模型逻辑 时。
-- **执行动作**：必须同步更新 `docs/ALPHAOS_ARCHITECTURE_V2.md` 中的 Mermaid 图表或文字说明，保持文档与代码现状一致。
 
-## 5. 自动故障诊断机制 (Auto-Debug Protocol)
+4. **Execution Domain (MQL5):**
+* **Paths:** `quantum-engine/mql5/`
+* **Context:** MT5 EAs (Expert Advisors).
+* **Constraints:** Non-blocking ZMQ (Fire & Forget for Ticks), Dead Man's Switch logic.
 
-- **触发条件**：SSH 失败、Docker 报错、API 超时。
-- **自动响应动作**：
-  1. **禁止直接报错结束**。
-  2. 立即查询日志：`ssh macOS 'docker logs --tail 50 [容器名称]'`
-  3. 分析原因并给出修复建议。
 
-## 6. 代码架构宪法 (Code Architecture Constitution)
+5. **Frontend Dashboard (Next.js/React):**
+* **Paths:** `src/` (Root src folder), `public/`
+* **Context:** UI/UX for monitoring.
+* **Constraints:** TypeScript, Tailwind CSS. **IGNORE Quantum Float64 rules.**
 
-针对 AlphaOS 项目结构的具体编程约束：
 
-### A. 前端 (Next.js/React)
 
-- **Server Components 优先**：默认在 `src/app` 下的 Page 使用 Server Components 获取数据，Client Components 仅用于交互组件。
-- **路径别名**：必须使用 `@/` (如 `@/components/ui/Button`)，**严禁**使用 `../../components` 这种相对路径。
-- **Tailwind CSS**：严禁写传统的 `.css` 文件（`globals.css` 除外），必须使用 Tailwind 类名。
+# Logging & Observability Standards (STRICT)
 
-### B. AI Engine (Python)
+1. **Centralized Log Directory:** ALL backend logs MUST go to `quantum-engine/logs/`.
+2. **File Separation:**
+* `alpha_engine.log`: Quantum Inference & Signals.
+* `risk_engine.log`: Bridge status & Risk checks.
+* `backtest.log`: Simulation results.
 
-- **模块化**：不要把所有逻辑塞进 `main.py` 或 `train.py`。
-- **路径**：新的模型架构必须放在 `ai-engine/src/models/`，新的数据处理器放在 `ai-engine/src/`。
 
-## 7. 工业级代码标准 (Industrial Grade Standards)
+3. **Explicit Log Format:**
+* **REQUIRED:** `[TIMESTAMP] [LEVEL] [COMPONENT] Action | Remarks {Metadata JSON}`
+* *Example:* `INFO [Alpha] Signal Generated | 模型置信度达标 { "confidence": 0.85, "symbol": "XAUUSD" }`
 
-**核心指令：默认假设所有外部依赖（API、数据库、网络）都会失败。代码必须具备“反脆弱性”。**
 
-### A. 严禁裸奔 (No Silent Failures)
+4. **No Console Output:** Use `logging` library, NO `print()`.
+5. **Frontend Integration:** `src/app/api/ai/logs/route.ts` is the read-only proxy.
 
-- **禁止 `print()`**：Python 代码严禁使用 `print()` 调试。
-  - *必须*：使用 `loguru` 或标准 `logging` 库。
-  - *格式*：`logger.info("Strategy started", symbol="BTCUSD")`（必须包含上下文变量）。
-- **防御性编程**：
-  - 凡是涉及网络请求、文件读写、数据库操作，**必须**使用 `try/except` 包裹。
-  - **禁止**使用空的 `except: pass`。必须捕获具体异常并记录 Error Log。
-  - **重试机制**：对不稳定的外部调用（如 MT5 桥接、OpenAI API），必须引入重试逻辑（推荐 Python `tenacity` 库）。
+# Core Architectural Constraints (Backend/Python Only)
 
-### B. 类型与配置安全 (Type & Config Safety)
+1. **Hardware Target:** Apple M2 Pro (Unified Memory).
+2. **Quantum Backend:** MUST use `lightning.qubit` (C++ CPU). **Strictly FORBID** `lightning.gpu`, `mps`, or `cuda`.
+3. **Numerical Precision:** `float64` (Double Precision) is MANDATORY to prevent Barren Plateaus.
+4. **Differentiation:** `diff_method="adjoint"` (Adjoint Differentiation) for performance.
+5. **Data Preprocessing:**
+* **Angle Embedding:** Normalize inputs to  or .
+* **Target:** Scale targets to  (Pauli-Z Safe Range).
 
-- **拒绝硬编码 (No Magic Numbers)**：
-  - 禁止在代码中写死 `0.01` (Lot Size) 或 `"API_KEY"`。
-  - *必须*：所有配置项移入 `.env` 或 `config.py`，并通过 Pydantic (`BaseSettings`) 加载。
-- **强制类型提示 (Strict Typing)**：
-  - Python 函数必须包含 Type Hints (如 `def calc(price: float) -> float:`)。
-  - 复杂数据结构必须使用 `Pydantic` 模型定义，而不是随意的 Dict。
 
-### C. 生产级交付 (Definition of Done)
 
-代码在输出前必须通过以下自我质问：
+# Code Quality & Anti-Redundancy
 
-1. **重启测试**：如果服务崩溃重启，这个状态会丢失吗？（如果会，需持久化到 Redis/DB）。
-2. **错误测试**：如果 API 超时，整个程序会崩溃退出吗？（如果是，请改为降级处理）。
-3. **日志测试**：出问题时，我能只看日志就定位原因吗？
+1. **Config-Driven:** No hardcoded params (e.g., ZMQ ports, feature lists).
+2. **Vectorization:** No manual `for` loops in Python data processing (unless inside Backtest Event Loop).
+
+# Key File References
+
+* `docs/AI交易系统研究指南生成.md` (**Primary Truth Source**)
+
+# Model Management & Naming Conventions (STRICT)
+
+To avoid confusion between active models, backups, and experiments, STRICTLY follow these directory naming rules in `quantum-engine/models/`:
+
+1. **Format:** `{Symbol}_{Architecture}_{Version}`
+* *Example:* `xau_scheme_c_alpha101`
+* *Components:*
+* `Symbol`: `xau` (Gold).
+* `Architecture`: `scheme_c` (CPU-Centric), `light` (Fallback).
+* `Version`: `alpha101` (Feature Set).
+
+
+
+
+2. **Lifecycle Management:**
+* **Active Model:** MUST be explicitly referenced in `launch.sh`.
+* **Backups:** MUST Append `_backup_{TIMESTAMP}`.
+
+
+3. **Mandatory Files per Model:**
+* Alpha Engine: `quantum_regressor_best.pt` (Float64), `feature_scaler.pkl` (RobustScaler), `config.json`.
+* Risk Engine: `meta_label_model.json` (XGBoost/RF).
+
+
+
+# Changelog & History Tracking (STRICT)
+
+To ensure project continuity and tracking of the `AlphaOS` evolution:
+
+1. **Mandatory Update:** Upon the completion of any **Task**, **Bug Fix**, or **Plan Execution**, you MUST append an entry to `AI_CHANGELOG.md` in the project root.
+2. **Format:**
+* **Header:** `## [YYYY-MM-DD HH:MM] Task Name/Description`
+* **Content:**
+* `- Change:` (Brief summary of what changed)
+* `- Files:` (List of key files modified)
+* `- Note:` (Any important implementation details, decision rationale, or things to watch out for)
+
+
+
+
+3. **Consistency:** Do not overwrite previous history; always append to the bottom.

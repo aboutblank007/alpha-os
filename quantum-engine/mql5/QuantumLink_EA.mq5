@@ -35,6 +35,10 @@ ZmqSocket  *g_pullSocket = NULL;   // Command Bus (PULL) - 连接 Python
 ZmqSocket  *g_repSocket = NULL;    // State Sync (REP) - 本地 bind
 
 //--- 状态变量
+int g_hRsi = INVALID_HANDLE;
+int g_hEmaFast = INVALID_HANDLE;
+int g_hEmaSlow = INVALID_HANDLE;
+
 datetime g_lastBarTime = 0;
 datetime g_lastHeartbeat = 0;
 datetime g_lastPythonHB = 0;
@@ -79,11 +83,22 @@ int OnInit()
     //--- 创建 Market Stream Socket (PUSH) - 本地 bind
     string marketAddr = StringFormat("%s:%d", InpBindAddress, InpMarketPort);
     g_pushSocket = new ZmqSocket(g_context.ref(), ZMQ_SOCKET_PUSH);
+    g_pushSocket.setSendHighWaterMark(1000); // 设置 SNDHWM 防止背压
     if(!g_pushSocket.bind(marketAddr)) {
         Print("错误: 无法绑定 Market Stream: ", marketAddr);
         return INIT_FAILED;
     }
     Print("✅ Market Stream 已绑定: ", marketAddr);
+    
+    //--- 初始化指标句柄 (以当前品种为例)
+    g_hRsi = iRSI(_Symbol, PERIOD_M1, 14, PRICE_CLOSE);
+    g_hEmaFast = iMA(_Symbol, PERIOD_M1, 14, 0, MODE_EMA, PRICE_CLOSE);
+    g_hEmaSlow = iMA(_Symbol, PERIOD_M1, 50, 0, MODE_EMA, PRICE_CLOSE);
+    
+    if(g_hRsi == INVALID_HANDLE || g_hEmaFast == INVALID_HANDLE || g_hEmaSlow == INVALID_HANDLE) {
+        Print("错误: 无法创建指标句柄");
+        return INIT_FAILED;
+    }
     
     //--- 创建 Command Bus Socket (PULL) - 连接 Python (connect)
     string commandAddr = StringFormat("%s:%d", InpPythonHost, InpCommandPort);
@@ -169,8 +184,16 @@ void OnTick()
     double vol_shock = CalculateVolumeShock(1);
     int spread = (int)SymbolInfoInteger(_Symbol, SYMBOL_SPREAD);
     
-    //--- 序列化为紧凑 CSV
-    string packet = StringFormat("TICK,%I64d,%s,%.5f,%.5f,%d,%.4f,%.4f,%.4f,%d,%d,%.5f",
+    //--- 获取指标值
+    double rsi[], emaF[], emaS[];
+    double rsi_val = 0, emaF_val = 0, emaS_val = 0;
+    
+    if(CopyBuffer(g_hRsi, 0, 1, 1, rsi) > 0) rsi_val = rsi[0];
+    if(CopyBuffer(g_hEmaFast, 0, 1, 1, emaF) > 0) emaF_val = emaF[0];
+    if(CopyBuffer(g_hEmaSlow, 0, 1, 1, emaS) > 0) emaS_val = emaS[0];
+    
+    //--- 序列化为紧凑 CSV (Float64 适配: %.7f 精度)
+    string packet = StringFormat("TICK,%I64d,%s,%.7f,%.7f,%d,%.7f,%.7f,%.7f,%.7f,%.7f,%.7f,%.7f,%d,%d,%.7f",
         (long)(TimeCurrent() * 1000),
         _Symbol,
         SymbolInfoDouble(_Symbol, SYMBOL_BID),
@@ -179,6 +202,10 @@ void OnTick()
         wick_ratio,
         vol_density,
         vol_shock,
+        emaF_val,
+        emaS_val,
+        rsi_val,
+        CalculateBidAskImbalance(1), // Dom Pressure Proxy (Vol Weighted)
         spread,
         g_tickCount,
         CalculateBidAskImbalance(1)
@@ -192,6 +219,9 @@ void OnTick()
     }
     
     g_tickCount = 0;
+    
+    //--- 优化：Tick驱动的即时订单轮询 (双重轮询)
+    PollCommandBus();
 }
 
 //+------------------------------------------------------------------+
@@ -271,11 +301,14 @@ void ExecuteOrderFromJson(string json)
         request.deviation = 20;
         request.type_filling = GetFillingMode(symbol);
         
-        if(OrderSend(request, result)) {
-            Print("✅ 订单执行成功: deal=", result.deal, " order=", result.order);
+        request.type_filling = GetFillingMode(symbol);
+        
+        // 使用 OrderSendAsync 减少执行延迟 (生产环境方案 3.4)
+        if(OrderSendAsync(request, result)) {
+            Print("✅ 异步订单发送成功: result=", result.retcode);
         } else {
-            PrintFormat("❌ 订单执行失败: retcode=%d (%s) SL=%.5f TP=%.5f Price=%.5f", 
-                result.retcode, GetRetcodeDescription(result.retcode), sl, tp, price);
+            PrintFormat("❌ 异步订单发送失败: retcode=%d (%s)", 
+                result.retcode, GetRetcodeDescription(result.retcode));
         }
     }
     else if(action == "MODIFY") {
@@ -360,8 +393,23 @@ void SendTickDataForSymbol(string symbol, int index)
     double vol_shock = CalculateVolumeShockForSymbol(symbol, 1);
     int spread = (int)SymbolInfoInteger(symbol, SYMBOL_SPREAD);
     
-    //--- 序列化为紧凑 CSV
-    string packet = StringFormat("TICK,%I64d,%s,%.5f,%.5f,%d,%.4f,%.4f,%.4f,%d,%d,%.5f",
+    //--- 获取指标值
+    int hRsi = iRSI(symbol, PERIOD_M1, 14, PRICE_CLOSE);
+    int hEmaF = iMA(symbol, PERIOD_M1, 14, 0, MODE_EMA, PRICE_CLOSE);
+    int hEmaS = iMA(symbol, PERIOD_M1, 50, 0, MODE_EMA, PRICE_CLOSE);
+    
+    double rsi_val = 0, emaF_val = 0, emaS_val = 0;
+    double buf[];
+    if(CopyBuffer(hRsi, 0, 1, 1, buf) > 0) rsi_val = buf[0];
+    if(CopyBuffer(hEmaF, 0, 1, 1, buf) > 0) emaF_val = buf[0];
+    if(CopyBuffer(hEmaS, 0, 1, 1, buf) > 0) emaS_val = buf[0];
+    
+    IndicatorRelease(hRsi);
+    IndicatorRelease(hEmaF);
+    IndicatorRelease(hEmaS);
+    
+    //--- 序列化为紧凑 CSV (对齐 protocol.py)
+    string packet = StringFormat("TICK,%I64d,%s,%.5f,%.5f,%d,%.4f,%.4f,%.4f,%.5f,%.5f,%.4f,%.4f,%d,%d,%.5f",
         (long)(TimeCurrent() * 1000),
         symbol,
         SymbolInfoDouble(symbol, SYMBOL_BID),
@@ -370,6 +418,10 @@ void SendTickDataForSymbol(string symbol, int index)
         wick_ratio,
         vol_density,
         vol_shock,
+        emaF_val,
+        emaS_val,
+        rsi_val,
+        CalculateBidAskImbalanceForSymbol(symbol, 1), // 用作为 dom_pressure_proxy
         spread,
         0,  // tick_count
         CalculateBidAskImbalanceForSymbol(symbol, 1)
@@ -519,7 +571,7 @@ double CalculateVolumeShock(int shift)
 }
 
 //+------------------------------------------------------------------+
-//| 计算 Bid/Ask 不平衡度                                            |
+//| 计算 Bid/Ask 不平衡度 (结合 Alpha101 能量修正)                   |
 //+------------------------------------------------------------------+
 double CalculateBidAskImbalance(int shift)
 {
@@ -530,7 +582,14 @@ double CalculateBidAskImbalance(int shift)
     double range = high - low;
     if(range < _Point) return 0;
     
-    return ((close - low) / range) - 0.5;
+    // 基础位置因子 [-0.5, 0.5]
+    double position_factor = ((close - low) / range) - 0.5;
+    
+    // 引入成交量冲击进行能量加权 [0.5, 3.0+]
+    double vol_shock = CalculateVolumeShock(shift);
+    
+    // 最终压力值 = 位置 * 能量
+    return position_factor * vol_shock;
 }
 
 //+------------------------------------------------------------------+

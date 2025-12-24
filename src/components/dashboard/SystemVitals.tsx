@@ -9,6 +9,7 @@
 import { useEffect, useRef } from 'react';
 import { useQuantumStore } from '@/store/useQuantumStore';
 import { useMarketStore } from '@/store/useMarketStore';
+import { useQuantumSocket } from '@/hooks/useQuantumSocket';
 import { THRESHOLDS } from '@/types/quantum';
 import { cn } from '@/lib/utils';
 import { Activity, Cpu, AlertTriangle, Heart } from 'lucide-react';
@@ -27,8 +28,11 @@ export function SystemVitals({ className }: SystemVitalsProps) {
     const isBarrenPlateau = useQuantumStore((s) => s.isBarrenPlateau);
     const lastHeartbeat = useQuantumStore((s) => s.lastHeartbeat);
     const telemetry = useQuantumStore((s) => s.telemetry);
+    // [Ref: 交易系统前端功能设计.MD] 3.1 延迟看门狗
+    // 使用 WebSocket 实时计算的 Latency，而不是 store 中的静态值
+    const { latency } = useQuantumSocket(); 
+    
     const isConnected = useMarketStore((s) => s.isConnected);
-    const latency = useMarketStore((s) => s.latency);
 
     // 死人开关倒计时
     useEffect(() => {

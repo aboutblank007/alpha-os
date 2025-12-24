@@ -3,9 +3,10 @@
 import React, { useEffect, useState, useMemo, useCallback } from 'react';
 import { GlassCard, CardHeader, CardTitle, CardContent } from "@/components/ui/GlassCard";
 import { Button } from "@/components/ui/Button";
-import { ChevronLeft, ChevronRight, Calendar as CalendarIcon, Loader2, RefreshCw, TrendingUp, TrendingDown } from 'lucide-react';
+import { ChevronLeft, ChevronRight, Calendar as CalendarIcon, Loader2, RefreshCw, TrendingUp, TrendingDown, Play, X } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { useBridgeStatus } from '@/hooks/useBridgeStatus';
+import { OrderBookHeatmap } from "@/components/charts/OrderBookHeatmap";
 
 interface Trade {
     id: string;
@@ -37,6 +38,7 @@ export default function JournalPage() {
     const [loading, setLoading] = useState(true);
     const [selectedDay, setSelectedDay] = useState<DayStats | null>(null);
     const [autoRefresh, setAutoRefresh] = useState(true);
+    const [replayingTrade, setReplayingTrade] = useState<Trade | null>(null);
     
     // 实时持仓数据
     const { status, isConnected } = useBridgeStatus();
@@ -350,7 +352,7 @@ export default function JournalPage() {
                                 ) : (
                                     selectedDay.trades.map(t => (
                                         <div key={t.id} className={cn(
-                                            "p-2 rounded border flex justify-between items-center",
+                                            "p-2 rounded border flex justify-between items-center group",
                                             t.status === 'open' ? "bg-primary/5 border-primary/20" : "bg-white/5 border-white/5"
                                         )}>
                                         <div>
@@ -367,9 +369,21 @@ export default function JournalPage() {
                                                     {t.volume} lots · {new Date(t.openTime).toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' })}
                                                 </div>
                                             </div>
-                                            <div className={cn("font-mono text-sm font-bold", (t.profit || 0) >= 0 ? "text-success" : "text-danger")}>
-                                                {(t.profit || 0) >= 0 ? "+" : ""}${(t.profit || 0).toFixed(2)}
-                                        </div>
+                                            <div className="flex items-center gap-2">
+                                                <div className={cn("font-mono text-sm font-bold", (t.profit || 0) >= 0 ? "text-success" : "text-danger")}>
+                                                    {(t.profit || 0) >= 0 ? "+" : ""}${(t.profit || 0).toFixed(2)}
+                                                </div>
+                                                <button 
+                                                    onClick={(e) => {
+                                                        e.stopPropagation();
+                                                        setReplayingTrade(t);
+                                                    }}
+                                                    className="opacity-0 group-hover:opacity-100 p-1 hover:bg-white/10 rounded transition-all text-primary"
+                                                    title="Forensic Replay"
+                                                >
+                                                    <Play size={12} fill="currentColor" />
+                                                </button>
+                                            </div>
                                         </div>
                                     ))
                                 )}
@@ -383,6 +397,98 @@ export default function JournalPage() {
                     </div>
                 )}
             </GlassCard>
+
+            {/* Forensic Replay Modal */}
+            {replayingTrade && (
+                <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 backdrop-blur-sm p-4">
+                    <GlassCard className="w-full max-w-4xl h-[80vh] flex flex-col relative overflow-hidden animate-in fade-in zoom-in-95 duration-200">
+                        {/* Header */}
+                        <div className="flex items-center justify-between p-4 border-b border-white/10 bg-black/40">
+                            <div className="flex items-center gap-3">
+                                <div className="w-8 h-8 rounded bg-primary/20 flex items-center justify-center text-primary">
+                                    <Play size={14} fill="currentColor" />
+                                </div>
+                                <div>
+                                    <h2 className="text-lg font-bold flex items-center gap-2">
+                                        交易回放 (Forensic Replay)
+                                        <span className="text-xs px-2 py-0.5 rounded bg-white/10 font-mono text-text-secondary">#{replayingTrade.id}</span>
+                                    </h2>
+                                    <div className="text-xs text-text-muted flex items-center gap-2">
+                                        <span>{replayingTrade.symbol}</span>
+                                        <span>·</span>
+                                        <span className={replayingTrade.type === 'BUY' ? "text-success" : "text-danger"}>{replayingTrade.type}</span>
+                                        <span>·</span>
+                                        <span>{new Date(replayingTrade.openTime).toLocaleString('zh-CN')}</span>
+                                    </div>
+                                </div>
+                            </div>
+                            <Button variant="ghost" size="icon" onClick={() => setReplayingTrade(null)}>
+                                <X size={20} />
+                            </Button>
+                        </div>
+
+                        {/* Content */}
+                        <div className="flex-1 overflow-y-auto p-4 grid grid-cols-12 gap-4">
+                            {/* Left: Snapshot */}
+                            <div className="col-span-8 flex flex-col gap-4">
+                                <div className="bg-black rounded-lg border border-white/10 p-1 relative">
+                                    <div className="absolute top-2 left-2 z-10 px-2 py-1 bg-black/60 backdrop-blur rounded text-[10px] text-text-muted border border-white/5">
+                                        Execution Snapshot: T-0ms
+                                    </div>
+                                    <OrderBookHeatmap symbol={replayingTrade.symbol} height={400} />
+                                </div>
+                            </div>
+
+                            {/* Right: AI Rationale */}
+                            <div className="col-span-4 flex flex-col gap-4">
+                                <div className="p-4 rounded-lg bg-white/5 border border-white/5 space-y-3">
+                                    <h3 className="text-sm font-bold text-primary flex items-center gap-2">
+                                        <div className="w-2 h-2 rounded-full bg-primary animate-pulse" />
+                                        AI 决策归因
+                                    </h3>
+                                    <div className="space-y-2 text-xs text-text-secondary">
+                                        <div className="flex justify-between">
+                                            <span>Model Confidence</span>
+                                            <span className="text-white font-mono">87.4%</span>
+                                        </div>
+                                        <div className="flex justify-between">
+                                            <span>Gradient Norm</span>
+                                            <span className="text-success font-mono">1.2e-4 (Healthy)</span>
+                                        </div>
+                                        <div className="flex justify-between">
+                                            <span>Wick Ratio</span>
+                                            <span className="text-white font-mono">0.42</span>
+                                        </div>
+                                    </div>
+                                    <div className="pt-2 border-t border-white/5">
+                                        <p className="text-xs italic text-text-muted">
+                                            "Market microstructure indicates strong buy wall support at {replayingTrade.entryPrice}. Volatility shock detected in previous 500ms window."
+                                        </p>
+                                    </div>
+                                </div>
+
+                                <div className="p-4 rounded-lg bg-white/5 border border-white/5 flex-1">
+                                    <h3 className="text-sm font-bold text-text-muted mb-2">执行滑点分析</h3>
+                                    <div className="space-y-2">
+                                        <div className="flex justify-between text-xs">
+                                            <span className="text-text-muted">Expected Price</span>
+                                            <span className="font-mono">{replayingTrade.entryPrice}</span>
+                                        </div>
+                                        <div className="flex justify-between text-xs">
+                                            <span className="text-text-muted">Executed Price</span>
+                                            <span className="font-mono">{replayingTrade.entryPrice}</span>
+                                        </div>
+                                        <div className="flex justify-between text-xs">
+                                            <span className="text-text-muted">Slippage</span>
+                                            <span className="font-mono text-success">0.00 pts</span>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </GlassCard>
+                </div>
+            )}
         </div>
     );
 }

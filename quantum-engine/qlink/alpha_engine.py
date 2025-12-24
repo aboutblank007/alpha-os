@@ -52,22 +52,33 @@ logger = logging.getLogger("qlink.alpha")
 # ================== 兼容类定义（用于 pickle 加载） ==================
 
 class TargetScaler:
-    """目标变量缩放器（兼容训练脚本的序列化）"""
+    """目标变量缩放器（兼容训练脚本的序列化，对称版）"""
     def __init__(self):
-        from sklearn.preprocessing import MinMaxScaler
-        self._scaler = MinMaxScaler(feature_range=(-0.9, 0.9))
+        self.scale_ = 1.0
         self._fitted = False
     
     def inverse_transform(self, y_scaled):
-        y_scaled = np.asarray(y_scaled, dtype=np.float64).reshape(-1, 1)
-        return self._scaler.inverse_transform(y_scaled).flatten()
+        y_scaled = np.asarray(y_scaled, dtype=np.float64)
+        return (y_scaled / 0.8) * self.scale_
 
 
 def _setup_logging() -> None:
+    """配置日志，同时输出到控制台和日志文件"""
+    log_format = "%(asctime)s %(levelname)s %(name)s - %(message)s"
+    
+    # 基础配置 (控制台)
     logging.basicConfig(
         level=logging.INFO,
-        format="%(asctime)s %(levelname)s %(name)s - %(message)s",
+        format=log_format,
     )
+    
+    # 文件配置
+    log_dir = Path(__file__).parent.parent / "logs"
+    if log_dir.exists():
+        file_handler = logging.FileHandler(log_dir / "alpha_engine.log")
+        file_handler.setFormatter(logging.Formatter(log_format))
+        logging.getLogger().addHandler(file_handler)
+        logger.info(f"✅ 日志文件已启用: {log_dir}/alpha_engine.log")
 
 
 # ================== 模型加载 ==================
@@ -84,6 +95,10 @@ class QuantumPredictor:
         self.model = None
         self.feature_transformer = None
         self.target_scaler = None
+        
+        # Alpha101 2.0: 特征滚动缓冲区 (用于 TS_Rank)
+        self._feature_buffer = []
+        self._buffer_max_size = 1440  # 1440 分钟/Tick
         self.feature_cols: List[str] = []
         self.n_qubits = 10
         self.n_layers = 3
@@ -143,34 +158,34 @@ class QuantumPredictor:
     
     def _restore_target_scaler(self, state):
         """从状态恢复 TargetScaler"""
-        from sklearn.preprocessing import MinMaxScaler
         
         class TargetScaler:
             def __init__(self):
-                self._scaler = MinMaxScaler(feature_range=(-0.9, 0.9))
+                self.scale_ = 1.0
                 self._fitted = True
             
             def inverse_transform(self, y_scaled):
-                y_scaled = np.asarray(y_scaled, dtype=np.float64).reshape(-1, 1)
-                return self._scaler.inverse_transform(y_scaled).flatten()
+                y_scaled = np.asarray(y_scaled, dtype=np.float64)
+                return (y_scaled / 0.8) * self.scale_
         
         # 如果 state 是 dict，从字典恢复
         if isinstance(state, dict):
             obj = TargetScaler()
-            obj._scaler = state.get("_scaler", state)
+            obj.scale_ = state.get("scale_", 1.0)
             return obj
         # 如果 state 本身有 inverse_transform，直接使用
         elif hasattr(state, "inverse_transform"):
             return state
-        # 如果 state 是 MinMaxScaler
+        # 旧版兼容：如果 state 是 MinMaxScaler
         elif hasattr(state, "_scaler"):
-            obj = TargetScaler()
-            obj._scaler = state._scaler
-            return obj
+            # 注意：旧版 pickle 无法完美兼容到对称逻辑，这里仅做降级处理
+            # 实际上由于我们重新训练了模型，这种情况不应发生
+            return state
         else:
-            # 尝试作为 MinMaxScaler 使用
+            # 尝试作为 scale_ 值使用
             obj = TargetScaler()
-            obj._scaler = state
+            if isinstance(state, (float, int)):
+                 obj.scale_ = float(state)
             return obj
     
     def _restore_transformer(self, state: Dict[str, Any]):
@@ -182,54 +197,67 @@ class QuantumPredictor:
             def __init__(self):
                 pass
             
+            def _apply_ts_rank_single(self, x_new: np.ndarray, buffer: List[np.ndarray]) -> np.ndarray:
+                """计算最新特征在缓冲区中的百分位排名"""
+                if not buffer:
+                    return np.full_like(x_new, 0.5)
+                
+                # buffer 形状: List[np.ndarray(1, N)] -> vstack -> (n_ticks, N)
+                buf_arr = np.vstack(buffer)
+                # 计算比当前值小的比例
+                ranks = np.zeros_like(x_new)
+                for i in range(x_new.shape[1]):
+                    # 避免全一致导致的问题 (x_new 形状是 1, N)
+                    ranks[0, i] = np.mean(buf_arr[:, i] < x_new[0, i])
+                return ranks
+
             def transform(self, X: np.ndarray) -> np.ndarray:
-                X = X.astype(np.float64)
-                n_samples = X.shape[0]
+                # Alpha101 2.0: 此时 X 已经是 TS_Rank ([0, 1])
+                # 注意：X 在这里是单行形状 (1, n_features)
                 n_features = X.shape[1]
-                out = np.zeros((n_samples, n_features), dtype=np.float64)
+                out = np.zeros((1, n_features), dtype=np.float64)
                 
-                # RSI
-                for i in self._rsi_idx:
-                    out[:, i] = np.clip(X[:, i], 0, 100) / 100.0 * np.pi
+                PHYSICAL_COLS = ["rsi", "wick_ratio", "wick"]
                 
-                # EMA Spread
-                if self._ema_spread_idx:
-                    ema_data = X[:, self._ema_spread_idx]
-                    ema_robust_out = self._ema_robust.transform(ema_data)
-                    ema_minmax_out = self._ema_minmax.transform(ema_robust_out)
-                    for j, i in enumerate(self._ema_spread_idx):
-                        out[:, i] = ema_minmax_out[:, j] * np.pi
-                
-                # Volume Shock
-                if self._volume_shock_idx:
-                    vol_data = X[:, self._volume_shock_idx]
-                    vol_log = np.sign(vol_data) * np.log1p(np.abs(vol_data))
-                    vol_std_out = self._vol_std.transform(vol_log)
-                    for j, i in enumerate(self._volume_shock_idx):
-                        out[:, i] = np.clip(vol_std_out[:, j], -3, 3)
-                
-                # General
-                if self._general_idx:
-                    general_data = X[:, self._general_idx]
-                    general_robust_out = self._general_robust.transform(general_data)
-                    for j, i in enumerate(self._general_idx):
-                        clipped = np.clip(general_robust_out[:, j], -3, 3)
-                        out[:, i] = clipped * (np.pi / 3.0)
+                for i in range(n_features):
+                    col_name = self.feature_cols[i].lower()
+                    val = X[0, i]
+                    
+                    if col_name in PHYSICAL_COLS or "rsi" in col_name or "wick" in col_name:
+                        # [0, 1] -> [0, pi]
+                        out[0, i] = val * np.pi
+                    elif "dom_pressure" in col_name or "imbalance" in col_name or "spread" in col_name:
+                        # [0, 1] -> [-pi, pi]
+                        out[0, i] = (val - 0.5) * 2.0 * np.pi
+                    else:
+                        # 默认 [0, 1] -> [-pi/2, pi/2]
+                        out[0, i] = (val - 0.5) * np.pi
                 
                 # PCA
                 X_pca = self._pca.transform(out)
                 return np.clip(X_pca, -np.pi, np.pi).astype(np.float64)
         
         obj = QuantumFeatureTransformer()
-        obj._rsi_idx = state["_rsi_idx"]
-        obj._ema_spread_idx = state["_ema_spread_idx"]
+        obj.feature_cols = state["feature_cols"]
+        obj._physical_idx = state.get("_physical_idx", state.get("_rsi_idx", []))
+        obj._ema_ratio_idx = state.get("_ema_ratio_idx", state.get("_ema_spread_idx", []))
+        obj._pressure_idx = state.get("_pressure_idx", [])
         obj._volume_shock_idx = state["_volume_shock_idx"]
         obj._general_idx = state["_general_idx"]
         obj._ema_robust = state["_ema_robust"]
         obj._ema_minmax = state["_ema_minmax"]
+        obj._pressure_robust = state.get("_pressure_robust")
         obj._vol_std = state["_vol_std"]
         obj._general_robust = state["_general_robust"]
         obj._pca = state["_pca"]
+        
+        # 重新初始化 _close_idx
+        obj._close_idx = -1
+        if hasattr(obj, "feature_cols"):
+            for i, col in enumerate(obj.feature_cols):
+                if col.lower() == "close":
+                    obj._close_idx = i
+                    break
         return obj
     
     def _build_model(self):
@@ -276,25 +304,69 @@ class QuantumPredictor:
             AlphaSignal: 预测信号
         """
         # 1. 构建特征向量
+        mid_price = (tick.bid + tick.ask) / 2.0
+        
+        # 基础特征提取（处理别名）
+        val_volume = float(tick.volume)
+        val_dom = tick.dom_pressure if hasattr(tick, "dom_pressure") else 0.0
+        # 如果 TickData 中没有 dom_pressure，尝试使用 dom_pressure_proxy
+        if val_dom == 0.0 and hasattr(tick, "dom_pressure_proxy"):
+            val_dom = tick.dom_pressure_proxy
+            
+        val_ema_fast = tick.ema_fast if hasattr(tick, "ema_fast") else 0.0
+        val_ema_slow = tick.ema_slow if hasattr(tick, "ema_slow") else 0.0
+        val_rsi = tick.rsi if hasattr(tick, "rsi") else 50.0  # 默认 50 中性
+        
+        # 衍生特征计算
+        val_ema_spread = val_ema_fast - val_ema_slow
+        
+        # 特征映射表
         feature_map = {
+            "open": mid_price,
+            "high": mid_price,
+            "low": mid_price,
+            "close": mid_price,
+            "tick_volume": val_volume,
+            "volume": val_volume,            # 兼容旧名
+            "ema_fast": val_ema_fast,
+            "ema_slow": val_ema_slow,
+            "ema_spread": val_ema_spread,
+            "rsi": val_rsi,
             "bid": tick.bid,
             "ask": tick.ask,
-            "volume": float(tick.volume),
             "wick_ratio": tick.wick_ratio,
-            "vol_density": tick.vol_density,
+            "volume_density": tick.vol_density,
+            "vol_density": tick.vol_density, # 兼容旧名
             "volume_shock": tick.vol_shock,
+            "vol_shock": tick.vol_shock,     # 兼容旧名
+            "dom_pressure_proxy": val_dom,
+            "dom_pressure": val_dom,         # 兼容旧名
             "spread": float(tick.spread) if tick.spread else 0,
             "tick_rate": float(tick.tick_rate) if tick.tick_rate else 0,
             "bid_ask_imbalance": tick.bid_ask_imbalance if tick.bid_ask_imbalance else 0,
+            # 缺失的指标用 0 或中性值补全
+            "atr": 0.0,
+            "adx": 0.0,
+            "wick_upper": 0.0,
+            "wick_lower": 0.0,
+            "candle_size": 0.0,
         }
         
         x_raw = np.array([
             feature_map.get(col, 0.0) for col in self.feature_cols
         ], dtype=np.float64).reshape(1, -1)
         
-        # 2. 特征变换
+        # 2. Alpha101 2.0: 计算 TS_Rank
+        # 更新缓冲区
+        self._feature_buffer.append(x_raw.copy())
+        if len(self._feature_buffer) > self._buffer_max_size:
+            self._feature_buffer.pop(0)
+            
+        # 计算当前 x_raw 在 buffer 中的排名
         if self.feature_transformer:
-            x_q = self.feature_transformer.transform(x_raw)
+            # 内部 transform 会处理 TS_Rank
+            x_rank = self.feature_transformer._apply_ts_rank_single(x_raw, self._feature_buffer)
+            x_q = self.feature_transformer.transform(x_rank)
         else:
             x_q = x_raw
         

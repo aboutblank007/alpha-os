@@ -54,6 +54,10 @@ export interface QuantumTelemetry {
   entropy: number;
   /** 预测置信度 [0.0 - 1.0] */
   confidence: number;
+  /** AI 得分 (用于决策) */
+  ai_score: number;
+  /** 市场机制分类 */
+  regime: string;
   /** M2 Pro P-Core 负载 (%) */
   pCoreLoad: number;
   /** M2 Pro E-Core 负载 (%) */
@@ -62,6 +66,34 @@ export interface QuantumTelemetry {
   latency: number;
   /** 时间戳 */
   timestamp: number;
+}
+
+/**
+ * AI 配置
+ */
+export interface AIConfig {
+    risk_off: boolean;
+    min_confidence: number;
+    max_vol_mult: number;
+    mode: string;
+    updated_at: string;
+}
+
+/**
+ * AI 推理日志
+ */
+export interface AILog {
+    id: string;
+    symbol: string;
+    action: string;
+    price: number;
+    timestamp: string;
+    resultProfit: number | null;
+    aiScore: number;
+    regime: string;
+    metaProb: number;
+    dqnAction: number;
+    quantumPolicy: number[];
 }
 
 /**

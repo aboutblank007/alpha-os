@@ -6,11 +6,15 @@
 
 import { create } from 'zustand';
 import { subscribeWithSelector } from 'zustand/middleware';
-import { THRESHOLDS, type QuantumTelemetry, type SystemStatus } from '@/types/quantum';
+import { THRESHOLDS, type QuantumTelemetry, type SystemStatus, type AIConfig, type AILog } from '@/types/quantum';
 
 interface QuantumState {
     // 遥测数据
     telemetry: QuantumTelemetry | null;
+    
+    // AI 数据
+    aiLogs: AILog[];
+    aiConfig: AIConfig | null;
 
     // 派生状态
     systemStatus: SystemStatus;
@@ -24,17 +28,22 @@ interface QuantumState {
 
     // Actions
     updateTelemetry: (telemetry: QuantumTelemetry) => void;
+    addAILog: (log: AILog) => void;
+    updateAIConfig: (config: AIConfig) => void;
     updateHeartbeat: (timestamp: number) => void;
     checkDeadManSwitch: () => void;
     reset: () => void;
 }
 
 const MAX_HISTORY_LENGTH = 100;
+const MAX_LOGS_LENGTH = 50;
 
 export const useQuantumStore = create<QuantumState>()(
     subscribeWithSelector((set, get) => ({
         // 初始状态
         telemetry: null,
+        aiLogs: [],
+        aiConfig: null,
         systemStatus: 'OK',
         isBarrenPlateau: false,
         lastHeartbeat: Date.now(),
@@ -71,6 +80,16 @@ export const useQuantumStore = create<QuantumState>()(
                     telemetry.entropy,
                 ],
             }));
+        },
+
+        addAILog: (log) => {
+            set((state) => ({
+                aiLogs: [log, ...state.aiLogs].slice(0, MAX_LOGS_LENGTH)
+            }));
+        },
+
+        updateAIConfig: (config) => {
+            set({ aiConfig: config });
         },
 
         updateHeartbeat: (timestamp) => {

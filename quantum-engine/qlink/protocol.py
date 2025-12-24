@@ -66,7 +66,7 @@ class TickData:
     """
     Tick 行情数据（紧凑 CSV 格式）
     
-    CSV 格式: TICK,timestamp,symbol,bid,ask,volume,wick_ratio,vol_density,vol_shock
+    CSV 格式: TICK,timestamp,symbol,bid,ask,volume,wick_ratio,vol_density,vol_shock,ema_fast,ema_slow,rsi,dom_pressure
     """
     timestamp: int          # 毫秒时间戳
     symbol: str             # 交易品种
@@ -76,8 +76,12 @@ class TickData:
     wick_ratio: float       # 影线比率
     vol_density: float      # 成交量密度
     vol_shock: float        # 成交量冲击
+    ema_fast: float         # 快速均线 (e.g. EMA14)
+    ema_slow: float         # 慢速均线 (e.g. EMA50)
+    rsi: float              # RSI 指标
+    dom_pressure: float     # DOM 压力代理值
     
-    # 可选的扩展字段
+    # 额外元数据
     spread: Optional[int] = None
     tick_rate: Optional[int] = None
     bid_ask_imbalance: Optional[float] = None
@@ -86,7 +90,7 @@ class TickData:
     def from_csv(cls, csv_line: str) -> "TickData":
         """解析 CSV 格式的 Tick 数据"""
         parts = csv_line.strip().split(",")
-        if len(parts) < 9 or parts[0] != MessageType.TICK.value:
+        if len(parts) < 13 or parts[0] != MessageType.TICK.value:
             raise ValueError(f"Invalid TICK format: {csv_line}")
         
         return cls(
@@ -98,14 +102,23 @@ class TickData:
             wick_ratio=float(parts[6]),
             vol_density=float(parts[7]),
             vol_shock=float(parts[8]),
-            spread=int(parts[9]) if len(parts) > 9 else None,
-            tick_rate=int(parts[10]) if len(parts) > 10 else None,
-            bid_ask_imbalance=float(parts[11]) if len(parts) > 11 else None,
+            ema_fast=float(parts[9]),
+            ema_slow=float(parts[10]),
+            rsi=float(parts[11]),
+            dom_pressure=float(parts[12]),
+            spread=int(parts[13]) if len(parts) > 13 else None,
+            tick_rate=int(parts[14]) if len(parts) > 14 else None,
+            bid_ask_imbalance=float(parts[15]) if len(parts) > 15 else None,
         )
     
     def to_csv(self) -> str:
         """序列化为 CSV 格式"""
-        base = f"{MessageType.TICK.value},{self.timestamp},{self.symbol},{self.bid:.5f},{self.ask:.5f},{self.volume},{self.wick_ratio:.4f},{self.vol_density:.4f},{self.vol_shock:.4f}"
+        base = (
+            f"{MessageType.TICK.value},{self.timestamp},{self.symbol},"
+            f"{self.bid:.5f},{self.ask:.5f},{self.volume},"
+            f"{self.wick_ratio:.4f},{self.vol_density:.4f},{self.vol_shock:.4f},"
+            f"{self.ema_fast:.5f},{self.ema_slow:.5f},{self.rsi:.4f},{self.dom_pressure:.4f}"
+        )
         if self.spread is not None:
             base += f",{self.spread},{self.tick_rate},{self.bid_ask_imbalance:.5f}"
         return base
@@ -277,6 +290,10 @@ class AlphaSignal:
                 "wick_ratio": self.tick_data.wick_ratio,
                 "vol_density": self.tick_data.vol_density,
                 "vol_shock": self.tick_data.vol_shock,
+                "ema_fast": self.tick_data.ema_fast,
+                "ema_slow": self.tick_data.ema_slow,
+                "rsi": self.tick_data.rsi,
+                "dom_pressure": self.tick_data.dom_pressure,
                 "spread": self.tick_data.spread,
                 "tick_rate": self.tick_data.tick_rate,
                 "bid_ask_imbalance": self.tick_data.bid_ask_imbalance,
@@ -298,6 +315,10 @@ class AlphaSignal:
             wick_ratio=data["tick_data"]["wick_ratio"],
             vol_density=data["tick_data"]["vol_density"],
             vol_shock=data["tick_data"]["vol_shock"],
+            ema_fast=data["tick_data"].get("ema_fast", 0.0),
+            ema_slow=data["tick_data"].get("ema_slow", 0.0),
+            rsi=data["tick_data"].get("rsi", 50.0),
+            dom_pressure=data["tick_data"].get("dom_pressure", 0.0),
             spread=data["tick_data"].get("spread"),
             tick_rate=data["tick_data"].get("tick_rate"),
             bid_ask_imbalance=data["tick_data"].get("bid_ask_imbalance"),
@@ -377,11 +398,11 @@ LATENCY_THRESHOLD_MS = 100      # 延迟阈值（看门狗）
 
 # 风控参数
 META_THRESHOLD = 0.15            # Meta-Labeling 阈值 (量子置信度概率 [0,1])
-TARGET_VOLATILITY = 0.02        # 目标波动率（2%）
+TARGET_VOLATILITY = 0.04        # 目标波动率（2%）
 MAX_POSITION_SIZE = 1.0         # 最大仓位（手）
 MIN_POSITION_SIZE = 0.05        # 最小仓位（手）
-ATR_SL_MULTIPLIER = 2.0         # ATR 止损倍数 (SL = Entry ± N × ATR)
-ATR_TP_MULTIPLIER = 3.0         # ATR 止盈倍数 (TP = Entry ± N × ATR)
+ATR_SL_MULTIPLIER = 4.0         # ATR 止损倍数 (SL = Entry ± N × ATR)
+ATR_TP_MULTIPLIER = 6.0         # ATR 止盈倍数 (TP = Entry ± N × ATR)
 
 # 离场策略配置 (参考 docs/交易风控离场策略研究.md)
 CONFIDENCE_DECAY_RATIO = 0.8    # 信号衰减阈值 (置信度下降 20%)

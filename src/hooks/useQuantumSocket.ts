@@ -9,7 +9,7 @@
 import { useEffect, useRef, useCallback, useState } from 'react';
 import { useMarketStore } from '@/store/useMarketStore';
 import { useQuantumStore } from '@/store/useQuantumStore';
-import type { MarketTick, QuantumTelemetry, AccountState, WorkerOutputMessage } from '@/types/quantum';
+import type { MarketTick, QuantumTelemetry, AccountState, WorkerOutputMessage, AILog, AIConfig } from '@/types/quantum';
 
 // WebSocket 端点配置
 const WS_BASE_URL = process.env.NEXT_PUBLIC_WS_URL || 'ws://localhost:8000';
@@ -65,6 +65,8 @@ export function useQuantumSocket(options: UseQuantumSocketOptions = {}) {
     const setConnectionStatus = useMarketStore((s) => s.setConnectionStatus);
     const setTransientTick = useMarketStore((s) => s.setTransientTick);
     const updateTelemetry = useQuantumStore((s) => s.updateTelemetry);
+    const addAILog = useQuantumStore((s) => s.addAILog);
+    const updateAIConfig = useQuantumStore((s) => s.updateAIConfig);
 
     // 初始化 Web Worker
     useEffect(() => {
@@ -185,6 +187,14 @@ export function useQuantumSocket(options: UseQuantumSocketOptions = {}) {
                 // 处理量子遥测
                 if (data.type === 'TELEMETRY') {
                     updateTelemetry(data.payload as QuantumTelemetry);
+                }
+                // 处理 AI 日志
+                else if (data.type === 'AI_LOG') {
+                    addAILog(data.payload as AILog);
+                }
+                // 处理 AI 配置
+                else if (data.type === 'AI_CONFIG') {
+                    updateAIConfig(data.payload as AIConfig);
                 }
                 // 处理账户状态
                 else if (data.type === 'ACCOUNT_STATE') {

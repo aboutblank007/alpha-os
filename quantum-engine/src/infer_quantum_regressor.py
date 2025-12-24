@@ -41,8 +41,9 @@ logger = logging.getLogger("quantum-engine.infer")
 # ================== 从训练脚本复制的 QuantumFeatureTransformer ==================
 from sklearn.preprocessing import MinMaxScaler, RobustScaler, StandardScaler
 
-RSI_COLS = {"rsi"}
-EMA_SPREAD_COLS = {"ema_spread"}
+PHYSICAL_COLS = {"rsi", "wick_ratio"}
+EMA_RATIO_COLS = {"ema_fast", "ema_slow"}
+PRESSURE_COLS = {"dom_pressure_proxy"}
 VOLUME_SHOCK_COLS = {"volume_shock"}
 
 
@@ -56,17 +57,27 @@ class QuantumFeatureTransformer:
         self.feature_cols = feature_cols
         self.seed = seed
         
-        self._rsi_idx: List[int] = []
-        self._ema_spread_idx: List[int] = []
+        self._physical_idx: List[int] = []
+        self._ema_ratio_idx: List[int] = []
+        self._pressure_idx: List[int] = []
         self._volume_shock_idx: List[int] = []
         self._general_idx: List[int] = []
         
+        # 查找 close 列索引以计算 EMA ratio
+        self._close_idx = -1
+        for i, col in enumerate(feature_cols):
+            if col.lower() == "close":
+                self._close_idx = i
+                break
+                
         for i, col in enumerate(feature_cols):
             col_lower = col.lower()
-            if col_lower in RSI_COLS or "rsi" in col_lower:
-                self._rsi_idx.append(i)
-            elif col_lower in EMA_SPREAD_COLS or "ema_spread" in col_lower:
-                self._ema_spread_idx.append(i)
+            if col_lower in PHYSICAL_COLS:
+                self._physical_idx.append(i)
+            elif col_lower in EMA_RATIO_COLS or "ema_spread" in col_lower:
+                self._ema_ratio_idx.append(i)
+            elif col_lower in PRESSURE_COLS:
+                self._pressure_idx.append(i)
             elif col_lower in VOLUME_SHOCK_COLS or "volume_shock" in col_lower:
                 self._volume_shock_idx.append(i)
             else:
@@ -74,6 +85,7 @@ class QuantumFeatureTransformer:
         
         self._ema_robust = RobustScaler()
         self._ema_minmax = MinMaxScaler(feature_range=(-1, 1))
+        self._pressure_robust = RobustScaler()
         self._vol_std = StandardScaler()
         self._general_robust = RobustScaler()
         
@@ -89,15 +101,34 @@ class QuantumFeatureTransformer:
         n_features = X.shape[1]
         out = np.zeros((n_samples, n_features), dtype=np.float64)
         
-        for i in self._rsi_idx:
-            out[:, i] = np.clip(X[:, i], 0, 100) / 100.0 * np.pi
+        for i in self._physical_idx:
+            # RSI 范围 [0, 100], WickRatio 范围 [0, 1]
+            col_name = self.feature_cols[i].lower()
+            if "rsi" in col_name:
+                out[:, i] = np.clip(X[:, i], 0, 100) / 100.0 * np.pi
+            else:
+                out[:, i] = np.clip(X[:, i], 0, 1) * np.pi
         
-        if self._ema_spread_idx:
-            ema_data = X[:, self._ema_spread_idx]
+        if self._ema_ratio_idx:
+            ema_data = X[:, self._ema_ratio_idx].copy()
+            if self._close_idx >= 0:
+                for j, i in enumerate(self._ema_ratio_idx):
+                    col_name = self.feature_cols[i].lower()
+                    if "ema" in col_name:
+                        denom = np.where(X[:, i] == 0, 1e-9, X[:, i])
+                        ema_data[:, j] = (X[:, self._close_idx] - X[:, i]) / denom
+            
             ema_robust_out = self._ema_robust.transform(ema_data)
             ema_minmax_out = self._ema_minmax.transform(ema_robust_out)
-            for j, i in enumerate(self._ema_spread_idx):
+            for j, i in enumerate(self._ema_ratio_idx):
                 out[:, i] = ema_minmax_out[:, j] * np.pi
+
+        if self._pressure_idx:
+            pressure_data = X[:, self._pressure_idx]
+            pressure_robust_out = self._pressure_robust.transform(pressure_data)
+            for j, i in enumerate(self._pressure_idx):
+                clipped = np.clip(pressure_robust_out[:, j], -3, 3)
+                out[:, i] = (clipped * (np.pi / 6.0)) + (np.pi / 2.0)
         
         if self._volume_shock_idx:
             vol_data = X[:, self._volume_shock_idx]
@@ -133,16 +164,24 @@ class QuantumFeatureTransformer:
             feature_cols=state["feature_cols"],
             seed=state["seed"],
         )
-        obj._rsi_idx = state["_rsi_idx"]
-        obj._ema_spread_idx = state["_ema_spread_idx"]
+        obj._physical_idx = state.get("_physical_idx", state.get("_rsi_idx", []))
+        obj._ema_ratio_idx = state.get("_ema_ratio_idx", state.get("_ema_spread_idx", []))
+        obj._pressure_idx = state.get("_pressure_idx", [])
         obj._volume_shock_idx = state["_volume_shock_idx"]
         obj._general_idx = state["_general_idx"]
         obj._ema_robust = state["_ema_robust"]
         obj._ema_minmax = state["_ema_minmax"]
+        obj._pressure_robust = state.get("_pressure_robust") # 兼容旧版
         obj._vol_std = state["_vol_std"]
         obj._general_robust = state["_general_robust"]
         obj._pca = state["_pca"]
         obj._fitted = state["_fitted"]
+        # 重新初始化 _close_idx
+        obj._close_idx = -1
+        for i, col in enumerate(obj.feature_cols):
+            if col.lower() == "close":
+                obj._close_idx = i
+                break
         return obj
 
 
@@ -150,7 +189,7 @@ class TargetScaler:
     """目标变量归一化器：[-0.9, 0.9]"""
     
     def __init__(self):
-        self._scaler = MinMaxScaler(feature_range=(-0.9, 0.9))
+        self._scaler = MinMaxScaler(feature_range=(-0.8, 0.8))
         self._fitted = False
     
     def inverse_transform(self, y_scaled: np.ndarray) -> np.ndarray:

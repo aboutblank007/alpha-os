@@ -4,10 +4,12 @@ import React, { useState, useEffect, useCallback } from 'react';
 import { Button } from "@/components/ui/Button";
 import { MarketWatch } from "@/components/dashboard/MarketWatch";
 import { TradingViewChart } from "@/components/charts/TradingViewChart";
+import { OrderBookHeatmap } from "@/components/charts/OrderBookHeatmap";
 import { GlassCard, CardHeader, CardTitle } from "@/components/ui/GlassCard";
-import { Maximize2, MoreHorizontal, Plus, Activity, Zap, Cpu } from "lucide-react";
+import { Maximize2, MoreHorizontal, Plus, Activity, Zap, Cpu, Layers } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useBridgeStatus } from "@/hooks/useBridgeStatus";
+import { useQuantumStore } from "@/store/useQuantumStore";
 
 // 量子 HFT 组件
 import { LatencyDisplay } from "@/components/dashboard/LatencyDisplay";
@@ -28,6 +30,7 @@ export default function DashboardPage() {
     const [selectedSymbol, setSelectedSymbol] = useState("BTCUSD");
     const [aiSignal, setAiSignal] = useState<AiSignal | null>(null);
     const [showQuantumPanel, setShowQuantumPanel] = useState(true);
+    const [viewMode, setViewMode] = useState<'chart' | 'depth'>('chart');
 
     // 接入 Bridge 数据
     const { status, isConnected } = useBridgeStatus();
@@ -35,24 +38,22 @@ export default function DashboardPage() {
 
     // 量子 WebSocket 连接
     const { closeAllPositions, ticksPerSecond } = useQuantumSocket();
-
-    // Fetch AI Signal
+    
+    // [Ref: 交易系统前端功能设计.MD] 5.0 实时 AI 遥测数据
+    // 替换旧的 fetch('/api/ai/latest') 轮询，改用 WebSocket 推送的 Telemetry
+    const telemetry = useQuantumStore(s => s.telemetry);
+    
     useEffect(() => {
-        const fetchAi = async () => {
-            try {
-                const res = await fetch('/api/ai/latest');
-                if (res.ok) {
-                    const data = await res.json();
-                    setAiSignal(data);
-                }
-            } catch (e) {
-                console.error(e);
-            }
-        };
-        fetchAi();
-        const interval = setInterval(fetchAi, 5000);
-        return () => clearInterval(interval);
-    }, []);
+        if (telemetry) {
+            setAiSignal({
+                action: telemetry.ai_score > 0.6 ? 'BUY' : telemetry.ai_score < 0.4 ? 'SELL' : 'WAIT',
+                confidence: telemetry.ai_score,
+                symbol: "XAUUSD", // Mock or from telemetry
+                price: 0, // Telemetry might not have price, rely on tick stream
+                timestamp: Date.now()
+            });
+        }
+    }, [telemetry]);
 
     // 计算浮动盈亏 (从持仓累加)
     const floatingPnl = positions.reduce((sum, p) => sum + p.pnl, 0);
@@ -140,6 +141,21 @@ export default function DashboardPage() {
                                 <span className="font-bold text-sm tracking-wide">{selectedSymbol}</span>
                             </div>
                             <div className="h-4 w-px bg-white/10" />
+                            <div className="flex gap-1 p-0.5 bg-black/20 rounded">
+                                <button 
+                                    onClick={() => setViewMode('chart')}
+                                    className={cn("px-2 py-0.5 text-xs rounded transition-colors", viewMode === 'chart' ? "bg-primary/20 text-primary font-bold" : "text-text-secondary hover:text-text-primary")}
+                                >
+                                    Chart
+                                </button>
+                                <button 
+                                    onClick={() => setViewMode('depth')}
+                                    className={cn("px-2 py-0.5 text-xs rounded transition-colors flex items-center gap-1", viewMode === 'depth' ? "bg-primary/20 text-primary font-bold" : "text-text-secondary hover:text-text-primary")}
+                                >
+                                    <Layers size={10} /> Depth
+                                </button>
+                            </div>
+                            <div className="h-4 w-px bg-white/10" />
                             <div className="flex gap-2">
                                 <span className="text-xs text-text-secondary cursor-pointer hover:text-primary transition-colors">15m</span>
                                 <span className="text-xs text-primary font-bold cursor-pointer">1H</span>
@@ -161,7 +177,13 @@ export default function DashboardPage() {
                         </div>
 
                         <div className="w-full h-full">
-                            <TradingViewChart symbol={selectedSymbol} />
+                            {viewMode === 'chart' ? (
+                                <TradingViewChart symbol={selectedSymbol} />
+                            ) : (
+                                <div className="w-full h-full p-12 bg-black flex items-center justify-center">
+                                    <OrderBookHeatmap symbol={selectedSymbol} height={600} />
+                                </div>
+                            )}
                         </div>
                     </GlassCard>
                 </div>

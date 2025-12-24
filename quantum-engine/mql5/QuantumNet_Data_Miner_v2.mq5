@@ -196,27 +196,28 @@ void ProcessBar(int bar_index, int tick_rate)
    // F. Tick Rate - 该K线期间的tick次数（已作为参数传入）
    // tick_rate 已经作为参数传入
    
-   // G. Bid/Ask Imbalance - 通过收盘价在高低区间的位置估算
-   // 公式: (Close - Low) / Range - 0.5，范围 [-0.5, 0.5]
+   // G. Bid/Ask Imbalance (Alpha101 修正版：位置 * 能量)
+   // 公式: ((Close - Low) / Range - 0.5) * VolumeShock
    double bid_ask_imbalance = 0.0;
    if(candle_range > _Point) {
-      bid_ask_imbalance = ((rates[0].close - rates[0].low) / candle_range) - 0.5;
+      double position_factor = ((rates[0].close - rates[0].low) / candle_range) - 0.5;
+      bid_ask_imbalance = position_factor * vol_shock;
    }
 
    //--- 5. 计算目标变量 (Target Variable)
    // 当前K线(Bar 1)到前一根K线(Bar 2)的价格变化
    double price_change = rates[0].close - rates[1].close;
 
-   //--- 6. 格式化并写入
+   //--- 6. 格式化并写入 (Float64 适配: %.7f 精度)
    string time_str = TimeToString(rates[0].time, TIME_DATE|TIME_MINUTES);
    
    // 构建 CSV 行（新增 3 个微观状态字段）
-   string csv_row = StringFormat("%s,%s,%.5f,%.5f,%.5f,%.5f,%d," + 
-                                 "%.5f,%.5f,%.5f,%.5f,%.5f,%.5f," + 
-                                 "%.5f,%.5f,%.5f,%.5f," + 
-                                 "%.5f,%.5f,%.2f," + 
-                                 "%d,%d,%.5f," +
-                                 "%.5f",
+   string csv_row = StringFormat("%s,%s,%.7f,%.7f,%.7f,%.7f,%d," + 
+                                 "%.7f,%.7f,%.7f,%.7f,%.7f,%.7f," + 
+                                 "%.7f,%.7f,%.7f,%.7f," + 
+                                 "%.7f,%.7f,%.7f," + 
+                                 "%d,%d,%.7f," +
+                                 "%.7f",
                                  time_str, _Symbol, 
                                  rates[0].open, rates[0].high, rates[0].low, rates[0].close, rates[0].tick_volume,
                                  ema_f[0], ema_s[0], (ema_f[0] - ema_s[0]), // EMA Spread

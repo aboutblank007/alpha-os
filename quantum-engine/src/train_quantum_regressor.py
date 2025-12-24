@@ -16,10 +16,11 @@ from __future__ import annotations
 
 import argparse
 import json
-import logging
+from loguru import logger
 import math
 import os
 import pickle
+import sys
 import time
 from dataclasses import asdict, dataclass
 from datetime import datetime
@@ -44,9 +45,9 @@ import pennylane as qml
 os.environ.setdefault("OMP_NUM_THREADS", "8")
 os.environ.setdefault("KMP_BLOCKTIME", "0")
 # PennyLane 批量并行：使用多进程执行 batch 内的量子电路
-os.environ.setdefault("PENNYLANE_NUM_THREADS", "8")
+# os.environ.setdefault("PENNYLANE_NUM_THREADS", "8")
 
-logger = logging.getLogger("quantum-engine.train")
+# logger = logging.getLogger("quantum-engine.train")
 
 
 TARGET_COL = "target_next_close_change"
@@ -54,8 +55,11 @@ TS_COL = "timestamp"
 SYMBOL_COL = "symbol"
 
 # 方案 C 附录 7.1 规范的特征分类
-RSI_COLS = {"rsi"}
-EMA_SPREAD_COLS = {"ema_spread"}
+PHYSICAL_COLS = {"rsi", "wick_ratio"}
+# 趋势特征：改用相对比例
+EMA_RATIO_COLS = {"ema_fast", "ema_slow"}
+# 压力特征
+PRESSURE_COLS = {"dom_pressure_proxy"}
 VOLUME_SHOCK_COLS = {"volume_shock"}
 # 其他数值特征采用通用处理
 
@@ -114,17 +118,28 @@ class QuantumFeatureTransformer:
         self.seed = seed
         
         # 按特征类型分组
-        self._rsi_idx: List[int] = []
-        self._ema_spread_idx: List[int] = []
+        self._physical_idx: List[int] = []
+        self._ema_ratio_idx: List[int] = []
+        self._pressure_idx: List[int] = []
         self._volume_shock_idx: List[int] = []
         self._general_idx: List[int] = []
         
+        # 查找 close 列索引以计算 EMA ratio
+        self._close_idx = -1
+        for i, col in enumerate(feature_cols):
+            if col.lower() == "close":
+                self._close_idx = i
+                break
+                
         for i, col in enumerate(feature_cols):
             col_lower = col.lower()
-            if col_lower in RSI_COLS or "rsi" in col_lower:
-                self._rsi_idx.append(i)
-            elif col_lower in EMA_SPREAD_COLS or "ema_spread" in col_lower:
-                self._ema_spread_idx.append(i)
+            if col_lower in PHYSICAL_COLS:
+                self._physical_idx.append(i)
+            elif col_lower in EMA_RATIO_COLS or "ema_spread" in col_lower:
+                # ema_spread 也要通过 ratio 处理
+                self._ema_ratio_idx.append(i)
+            elif col_lower in PRESSURE_COLS:
+                self._pressure_idx.append(i)
             elif col_lower in VOLUME_SHOCK_COLS or "volume_shock" in col_lower:
                 self._volume_shock_idx.append(i)
             else:
@@ -133,6 +148,7 @@ class QuantumFeatureTransformer:
         # 各类型的 scaler
         self._ema_robust = RobustScaler()
         self._ema_minmax = MinMaxScaler(feature_range=(-1, 1))
+        self._pressure_robust = RobustScaler()
         self._vol_std = StandardScaler()
         self._general_robust = RobustScaler()
         
@@ -147,12 +163,26 @@ class QuantumFeatureTransformer:
         X = X.astype(np.float64)
         
         # 1. 对各类特征分别拟合 scaler
-        if self._ema_spread_idx:
-            ema_data = X[:, self._ema_spread_idx]
+        if self._ema_ratio_idx:
+            # 尝试计算 ratio: (close - ema) / ema
+            # 如果 X 包含必要的列
+            ema_data = X[:, self._ema_ratio_idx].copy()
+            if self._close_idx >= 0:
+                for j, i in enumerate(self._ema_ratio_idx):
+                    col_name = self.feature_cols[i].lower()
+                    if "ema" in col_name:
+                        # 避免除以 0
+                        denom = np.where(X[:, i] == 0, 1e-9, X[:, i])
+                        ema_data[:, j] = (X[:, self._close_idx] - X[:, i]) / denom
+            
             self._ema_robust.fit(ema_data)
             ema_robust_out = self._ema_robust.transform(ema_data)
             self._ema_minmax.fit(ema_robust_out)
-        
+
+        if self._pressure_idx:
+            pressure_data = X[:, self._pressure_idx]
+            self._pressure_robust.fit(pressure_data)
+            
         if self._volume_shock_idx:
             vol_data = X[:, self._volume_shock_idx]
             # ln(1+x) 变换，处理负值
@@ -177,25 +207,23 @@ class QuantumFeatureTransformer:
         n_features = X.shape[1]
         out = np.zeros((n_samples, n_features), dtype=np.float64)
         
-        # RSI: x / 100 * π → [0, π]
-        for i in self._rsi_idx:
-            out[:, i] = np.clip(X[:, i], 0, 100) / 100.0 * np.pi
+        # 方案 C 2.0: 所有特征都已经是 TS_Rank ([0, 1])
+        # 我们只需根据列名决定是映射到 [0, pi] 还是 [-pi, pi]
         
-        # EMA Spread: RobustScaler → MinMax(-1,1) → * π → [-π, π]
-        if self._ema_spread_idx:
-            ema_data = X[:, self._ema_spread_idx]
-            ema_robust_out = self._ema_robust.transform(ema_data)
-            ema_minmax_out = self._ema_minmax.transform(ema_robust_out)
-            for j, i in enumerate(self._ema_spread_idx):
-                out[:, i] = ema_minmax_out[:, j] * np.pi
+        for i in range(n_features):
+            col_name = self.feature_cols[i].lower()
+            val = X[:, i]
+            
+            if col_name in PHYSICAL_COLS or "rsi" in col_name or "wick" in col_name:
+                # [0, 1] -> [0, pi]
+                out[:, i] = val * np.pi
+            elif "dom_pressure" in col_name or "imbalance" in col_name or "spread" in col_name:
+                # [0, 1] -> [-pi, pi] 假设 0.5 是中心
+                out[:, i] = (val - 0.5) * 2.0 * np.pi
+            else:
+                # 默认 [0, 1] -> [-pi/2, pi/2]
+                out[:, i] = (val - 0.5) * np.pi
         
-        # Volume Shock: ln(1+x) → StandardScaler → 约 [-2, 2]（不再乘 π）
-        if self._volume_shock_idx:
-            vol_data = X[:, self._volume_shock_idx]
-            vol_log = np.sign(vol_data) * np.log1p(np.abs(vol_data))
-            vol_std_out = self._vol_std.transform(vol_log)
-            for j, i in enumerate(self._volume_shock_idx):
-                out[:, i] = np.clip(vol_std_out[:, j], -3, 3)
         
         # 其他特征: RobustScaler → clip(-3,3) → * (π/3) → [-π, π]
         if self._general_idx:
@@ -230,12 +258,14 @@ class QuantumFeatureTransformer:
             "n_qubits": self.n_qubits,
             "feature_cols": self.feature_cols,
             "seed": self.seed,
-            "_rsi_idx": self._rsi_idx,
-            "_ema_spread_idx": self._ema_spread_idx,
+            "_physical_idx": self._physical_idx,
+            "_ema_ratio_idx": self._ema_ratio_idx,
+            "_pressure_idx": self._pressure_idx,
             "_volume_shock_idx": self._volume_shock_idx,
             "_general_idx": self._general_idx,
             "_ema_robust": self._ema_robust,
             "_ema_minmax": self._ema_minmax,
+            "_pressure_robust": self._pressure_robust,
             "_vol_std": self._vol_std,
             "_general_robust": self._general_robust,
             "_pca": self._pca,
@@ -265,24 +295,32 @@ class QuantumFeatureTransformer:
 
 class TargetScaler:
     """
-    目标变量归一化器：将 target 归一化到 [-0.9, 0.9]，留出 0.1 缓冲防止量子测量饱和。
+    目标变量归一化器（对称版）：
+    将 target 归一化到 [-0.8, 0.8]，强制 0 映射为 0。
+    解决 MinMaxScaler 在数据分布偏斜时导致的零点漂移问题（即模型输出 0 被解码为 Buy/Sell）。
     """
     
     def __init__(self):
-        self._scaler = MinMaxScaler(feature_range=(-0.9, 0.9))
+        self.scale_ = 1.0
         self._fitted = False
     
     def fit(self, y: np.ndarray) -> "TargetScaler":
-        y = y.astype(np.float64).reshape(-1, 1)
-        self._scaler.fit(y)
+        y = y.astype(np.float64)
+        max_abs = np.max(np.abs(y))
+        # 防止除以 0
+        if max_abs == 0:
+            self.scale_ = 1.0
+        else:
+            self.scale_ = max_abs
         self._fitted = True
         return self
     
     def transform(self, y: np.ndarray) -> np.ndarray:
         if not self._fitted:
             raise RuntimeError("TargetScaler 未 fit")
-        y = y.astype(np.float64).reshape(-1, 1)
-        return self._scaler.transform(y).flatten()
+        y = y.astype(np.float64)
+        # 线性映射：x / max_abs * 0.8 -> [-0.8, 0.8]
+        return (y / self.scale_) * 0.8
     
     def fit_transform(self, y: np.ndarray) -> np.ndarray:
         self.fit(y)
@@ -292,15 +330,11 @@ class TargetScaler:
         """逆变换：将模型预测值还原为原始尺度。"""
         if not self._fitted:
             raise RuntimeError("TargetScaler 未 fit")
-        y_scaled = np.asarray(y_scaled, dtype=np.float64).reshape(-1, 1)
-        return self._scaler.inverse_transform(y_scaled).flatten()
+        y_scaled = np.asarray(y_scaled, dtype=np.float64)
+        return (y_scaled / 0.8) * self.scale_
 
 
-def _setup_logging() -> None:
-    logging.basicConfig(
-        level=logging.INFO,
-        format="%(asctime)s %(levelname)s %(name)s - %(message)s",
-    )
+
 
 
 def _seed_everything(seed: int) -> None:
@@ -377,6 +411,22 @@ def _select_feature_cols(df: pd.DataFrame) -> List[str]:
     return cols
 
 
+def _apply_ts_rank(df: pd.DataFrame, feature_cols: List[str], window: int = 1440) -> pd.DataFrame:
+    """
+    对指定特征列执行滚动时间序列排名 (TS_Rank)。
+    产生值范围 [0, 1]。
+    """
+    logger.info("⏳ 执行 Rolling TS_Rank (window={})", window)
+    df_rank = df.copy()
+    for col in feature_cols:
+        # 使用 pandas 的 rolling rank
+        df_rank[col] = df[col].rolling(window=window, min_periods=1).rank(pct=True)
+    
+    # 填充开头的 NaN (虽然 min_periods=1 已经填充，但防万一)
+    df_rank[feature_cols] = df_rank[feature_cols].fillna(0.5)
+    return df_rank
+
+
 def _time_split(
     X: np.ndarray,
     y: np.ndarray,
@@ -442,8 +492,17 @@ class QuantumRegressor(nn.Module):
 
 
 def main() -> int:
-    _setup_logging()
+    # 强制日志输出到终端和文件
+    logger.remove()
+    logger.add(sys.stderr, level="INFO")
+    
     args = _parse_args()
+    
+    # 确保输出目录存在
+    os.makedirs(args.outdir, exist_ok=True)
+    logger.add(os.path.join(args.outdir, "train.log"), rotation="10 MB")
+    
+    logger.info("🎬 启动模型训练任务")
     cfg = TrainConfig(
         data=args.data,
         outdir=args.outdir,
@@ -473,14 +532,17 @@ def main() -> int:
     reports_dir = outdir.parent / "reports"
     reports_dir.mkdir(parents=True, exist_ok=True)
 
-    logger.info("📥 读取数据：%s", str(data_path))
+    logger.info("📥 读取数据：{}", str(data_path))
     df = _load_dataframe(data_path, cfg.symbol, cfg.timestamp_format)
-    logger.info("✅ 数据读取完成：rows=%d symbol=%s", len(df), cfg.symbol)
+    logger.info("✅ 数据读取完成：rows={} symbol={}", len(df), cfg.symbol)
     feature_cols = _select_feature_cols(df)
-    logger.info("🧩 特征列选择完成：n_features=%d（示例=%s）", len(feature_cols), feature_cols[:10])
+    logger.info("🧩 特征列选择完成：n_features={}（示例={}）", len(feature_cols), feature_cols[:10])
+
+    # 方案 C 2.0: 应用 TS_Rank
+    df = _apply_ts_rank(df, feature_cols, window=1440)
 
     # 方案 C：使用 float64
-    X_raw = df[feature_cols].replace([np.inf, -np.inf], np.nan).fillna(0.0).to_numpy(dtype=np.float64)
+    X_raw = df[feature_cols].replace([np.inf, -np.inf], np.nan).fillna(0.5).to_numpy(dtype=np.float64)
     y_raw = df[TARGET_COL].to_numpy(dtype=np.float64)
 
     # 时间切分（先切，再在训练段尾部限量）
@@ -510,7 +572,7 @@ def main() -> int:
     device = torch.device("cpu")
     backend = _pick_backend()
     logger.info(
-        "配置：symbol=%s qubits=%d layers=%d backend=%s device=%s dtype=float64 train=%d/%d val=%d feats=%d",
+        "配置：symbol={} qubits={} layers={} backend={} device={} dtype=float64 train={}/{} val={} feats={}",
         cfg.symbol,
         cfg.qubits,
         cfg.layers,
@@ -585,7 +647,7 @@ def main() -> int:
 
         tr = float(np.mean(tr_losses)) if tr_losses else float("nan")
         va = float(np.mean(va_losses)) if va_losses else float("nan")
-        logger.info("epoch=%d train_loss=%.6f val_loss=%.6f", epoch, tr, va)
+        logger.info("epoch={} train_loss={:.6f} val_loss={:.6f}", epoch, tr, va)
 
         if va < (best_val - cfg.min_delta):
             best_val = va
@@ -596,7 +658,7 @@ def main() -> int:
             bad_epochs += 1
             if bad_epochs >= cfg.patience:
                 logger.warning(
-                    "触发早停：patience=%d min_delta=%.6g（best_val=%.6f）",
+                    "触发早停：patience={} min_delta={:.6g}（best_val={:.6f}）",
                     cfg.patience,
                     cfg.min_delta,
                     best_val,
