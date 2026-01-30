@@ -11,8 +11,9 @@ Implements risk controls:
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from datetime import datetime, date
+from datetime import datetime, date, timedelta
 from typing import Any
+from zoneinfo import ZoneInfo
 
 from alphaos.core.config import RiskConfig
 from alphaos.core.logging import get_logger
@@ -75,7 +76,7 @@ class RiskManager:
     def reset_daily(self) -> None:
         """Reset daily counters (call at start of new day)."""
         self._daily_pnl = 0.0
-        self._current_date = date.today()
+        self._current_date = self._current_trading_day()
         
         # Don't reset halt if it's from consecutive losses
         if self._halt_reason == RiskEvent.DAILY_LOSS_LIMIT:
@@ -102,7 +103,7 @@ class RiskManager:
             return False, f"Trading halted: {self._halt_reason}"
         
         # Reset daily counters if new day
-        today = date.today()
+        today = self._current_trading_day()
         if self._current_date != today:
             self.reset_daily()
         
@@ -246,3 +247,18 @@ class RiskManager:
                 exposure=exposure_usd,
                 limit=self.config.max_position_usd,
             )
+
+    def _current_trading_day(self) -> date:
+        """Get the current trading day based on configured timezone and cutoff."""
+        now = datetime.now(ZoneInfo(self.config.timezone))
+        cutoff_hour = self.config.trading_day_cutoff
+        if cutoff_hour:
+            cutoff_reached = (
+                now.hour,
+                now.minute,
+                now.second,
+                now.microsecond,
+            ) >= (cutoff_hour, 0, 0, 0)
+            if cutoff_reached:
+                return (now + timedelta(days=1)).date()
+        return now.date()
