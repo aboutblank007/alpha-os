@@ -1492,8 +1492,14 @@ def serve_v4() -> None:
         # ================================================================
         ws_server = None
         try:
-            ws_host = "0.0.0.0"
-            ws_server = WSRuntimeServer(host=ws_host, port=int(args.ws_port))
+            ws_runtime_cfg = config.monitoring.ws_runtime
+            ws_host = ws_runtime_cfg.host
+            ws_server = WSRuntimeServer(
+                host=ws_host,
+                port=int(args.ws_port),
+                allowed_origins=ws_runtime_cfg.allowed_origins,
+                auth_tokens=ws_runtime_cfg.auth_tokens,
+            )
             await ws_server.start()
             display_host = "localhost" if ws_host in ("0.0.0.0", "127.0.0.1") else ws_host
             logger.info(
