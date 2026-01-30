@@ -1504,6 +1504,8 @@ def serve_v4() -> None:
         # WebSocket Runtime Server (UI realtime snapshots)
         # ================================================================
         ws_server = None
+        snapshot_queue: asyncio.Queue[tuple[RuntimeSnapshot, list[dict[str, Any]]]] | None = None
+        snapshot_task: asyncio.Task | None = None
         try:
             ws_host = api_cfg.api.ws_host if api_cfg is not None else "127.0.0.1"
             ws_allowed_origins = api_cfg.api.ws_allowed_origins if api_cfg is not None else None
@@ -1544,6 +1546,43 @@ def serve_v4() -> None:
             except Exception as e:
                 logger.warning("DataStore init failed", error=str(e))
                 data_store = None
+
+        async def _snapshot_worker() -> None:
+            if snapshot_queue is None:
+                return
+            while True:
+                item = await snapshot_queue.get()
+                if item is None:
+                    break
+                snapshot, positions_payload = item
+                try:
+                    if runtime_store is not None:
+                        await runtime_store.write_snapshot(snapshot)
+                    if ws_server is not None:
+                        await ws_server.broadcast(snapshot)
+                        await ws_server.broadcast_positions(positions_payload)
+                except Exception as e:
+                    logger.warning("Snapshot worker error", error=str(e))
+
+        def _enqueue_snapshot(
+            snapshot: RuntimeSnapshot,
+            positions_payload: list[dict[str, Any]],
+        ) -> None:
+            if snapshot_queue is None:
+                return
+            if snapshot_queue.full():
+                try:
+                    snapshot_queue.get_nowait()
+                except asyncio.QueueEmpty:
+                    pass
+            try:
+                snapshot_queue.put_nowait((snapshot, positions_payload))
+            except asyncio.QueueFull:
+                pass
+
+        if runtime_store is not None or ws_server is not None:
+            snapshot_queue = asyncio.Queue(maxsize=2)
+            snapshot_task = asyncio.create_task(_snapshot_worker())
         symbol_info = {}
         account_equity = None
         last_account_update_ts = 0.0
