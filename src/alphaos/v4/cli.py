@@ -1446,6 +1446,7 @@ def serve_v4() -> None:
             be_trigger=exit_v21_config.be_trigger_net_usd,
             partial_trigger=exit_v21_config.partial1_trigger_net_usd,
         )
+        exit_v21_tick_value = float(exit_v21_config.tick_value_usd_per_lot or 0.0)
         
         logger.info(
             "Server components initialized",
@@ -1504,8 +1505,15 @@ def serve_v4() -> None:
         # ================================================================
         ws_server = None
         try:
-            ws_host = "0.0.0.0"
-            ws_server = WSRuntimeServer(host=ws_host, port=int(args.ws_port))
+            ws_host = api_cfg.api.ws_host if api_cfg is not None else "127.0.0.1"
+            ws_allowed_origins = api_cfg.api.ws_allowed_origins if api_cfg is not None else None
+            ws_auth_tokens = api_cfg.api.ws_auth_tokens if api_cfg is not None else None
+            ws_server = WSRuntimeServer(
+                host=ws_host,
+                port=int(args.ws_port),
+                allowed_origins=ws_allowed_origins,
+                auth_tokens=ws_auth_tokens,
+            )
             await ws_server.start()
             display_host = "localhost" if ws_host in ("0.0.0.0", "127.0.0.1") else ws_host
             logger.info(
@@ -1558,49 +1566,42 @@ def serve_v4() -> None:
                     )
             except Exception as e:
                 logger.warning("Symbol info fetch failed", error=str(e))
-        
-        tick_value_symbol = float(symbol_info.get("tick_value", 0.0) or 0.0)
-        tick_value_config = float(exit_v21_config.tick_value_usd_per_lot or 0.0)
-        tick_value_explicit = _has_nested_key(
-            yaml_config, ("execution", "exit_v21", "tick_value_usd_per_lot")
+        symbol_tick_value = float(symbol_info.get("tick_value", 0.0) or 0.0)
+        exit_v21_cfg_explicit = (
+            isinstance(yaml_config, dict)
+            and "execution" in yaml_config
+            and isinstance(yaml_config.get("execution"), dict)
+            and "exit_v21" in yaml_config.get("execution", {})
+            and isinstance(yaml_config["execution"].get("exit_v21"), dict)
+            and "tick_value_usd_per_lot" in yaml_config["execution"]["exit_v21"]
         )
-        tick_value_tolerance = 0.01
-        tick_value_diff = abs(tick_value_config - tick_value_symbol)
-        tick_value_threshold = max(
-            1e-6, tick_value_tolerance * max(tick_value_config, tick_value_symbol, 1.0)
-        )
-        if tick_value_symbol > 0:
-            if not tick_value_explicit:
-                if tick_value_diff > tick_value_threshold:
-                    logger.warning(
-                        "Exit v2.1 tick_value not explicitly set; overriding with symbol info",
-                        config_tick_value=round(tick_value_config, 6),
-                        symbol_tick_value=round(tick_value_symbol, 6),
-                        diff=round(tick_value_diff, 6),
-                        tolerance=round(tick_value_threshold, 6),
-                    )
-                else:
-                    logger.info(
-                        "Exit v2.1 tick_value not explicitly set; using symbol info",
-                        symbol_tick_value=round(tick_value_symbol, 6),
-                    )
-                exit_v21_config.tick_value_usd_per_lot = tick_value_symbol
+        tick_value_threshold = 1e-3
+        if symbol_tick_value > 0:
+            if not exit_v21_cfg_explicit or exit_v21_tick_value <= 0:
+                logger.info(
+                    "Exit v2.1 tick_value not explicitly configured; using symbol info",
+                    config_tick_value=exit_v21_tick_value,
+                    symbol_tick_value=symbol_tick_value,
+                )
+                exit_v21_tick_value = symbol_tick_value
+                exit_v21_config.tick_value_usd_per_lot = symbol_tick_value
             else:
-                if tick_value_diff > tick_value_threshold:
+                denom = max(exit_v21_tick_value, symbol_tick_value, 1e-9)
+                diff_ratio = abs(exit_v21_tick_value - symbol_tick_value) / denom
+                if diff_ratio > tick_value_threshold:
                     logger.warning(
-                        "Exit v2.1 tick_value differs from symbol info; keeping config value",
-                        config_tick_value=round(tick_value_config, 6),
-                        symbol_tick_value=round(tick_value_symbol, 6),
-                        diff=round(tick_value_diff, 6),
-                        tolerance=round(tick_value_threshold, 6),
+                        "Exit v2.1 tick_value differs from symbol info",
+                        config_tick_value=exit_v21_tick_value,
+                        symbol_tick_value=symbol_tick_value,
+                        diff_ratio=round(diff_ratio, 6),
                         suggestion="Update execution.exit_v21.tick_value_usd_per_lot to match broker tick_value",
                     )
-        else:
-            if tick_value_config > 0:
-                logger.warning(
-                    "Symbol tick_value unavailable; using Exit v2.1 config value",
-                    config_tick_value=round(tick_value_config, 6),
-                )
+        elif exit_v21_tick_value <= 0:
+            logger.warning(
+                "Exit v2.1 tick_value unavailable; check execution.exit_v21.tick_value_usd_per_lot",
+                config_tick_value=exit_v21_tick_value,
+                symbol_tick_value=symbol_tick_value,
+            )
 
         # ================================================================
         # v4.0: Boot State Machine
@@ -1978,6 +1979,35 @@ def serve_v4() -> None:
                 )
             return result
         
+        async def _snapshot_worker(
+            queue: asyncio.Queue[tuple[RuntimeSnapshot, list[dict[str, Any]], float] | None],
+        ) -> None:
+            while True:
+                item = await queue.get()
+                if item is None:
+                    queue.task_done()
+                    break
+                snapshot, positions_payload, ts = item
+                try:
+                    if runtime_store is not None:
+                        await runtime_store.write_snapshot(snapshot)
+                    if ws_server is not None:
+                        await ws_server.broadcast(snapshot)
+                        await ws_server.broadcast_positions(positions_payload)
+                    if data_store is not None:
+                        data_store.enqueue_positions(ts=ts, positions=positions_payload)
+                except Exception as exc:
+                    logger.error(f"Snapshot worker error: {exc}")
+                finally:
+                    queue.task_done()
+
+        snapshot_queue: asyncio.Queue[tuple[RuntimeSnapshot, list[dict[str, Any]], float] | None] = asyncio.Queue(
+            maxsize=2
+        )
+        snapshot_task: asyncio.Task[None] | None = None
+        if runtime_store is not None or ws_server is not None or data_store is not None:
+            snapshot_task = asyncio.create_task(_snapshot_worker(snapshot_queue))
+
         tick_count = 0
         last_snapshot_time = 0.0
         bar_count_prev = 0
@@ -2445,7 +2475,7 @@ def serve_v4() -> None:
                             risk_budget = max(0.0, equity * (risk_pct / 100.0))
 
                             tick_size = float(symbol_info.get("tick_size", 0.0) or 0.0)
-                            tick_value = float(exit_v21_config.tick_value_usd_per_lot or 0.0)
+                            tick_value = exit_v21_tick_value or float(symbol_info.get("tick_value", 0.0) or 0.0)
                             vol_min_sym = float(symbol_info.get("volume_min", 0.0) or 0.0)
                             vol_max_sym = float(symbol_info.get("volume_max", 0.0) or 0.0)
                             vol_step_sym = float(symbol_info.get("volume_step", 0.0) or 0.0)
@@ -2647,12 +2677,23 @@ def serve_v4() -> None:
                                 direction_str = None
                             current_lots = state.current_lots if state.current_lots > 0 else state.entry_lots
                             current_price = state.current_mid if state.current_mid > 0 else state.entry_price
+                            current_bid = state.current_bid if state.current_bid > 0 else current_price
+                            current_ask = state.current_ask if state.current_ask > 0 else current_price
+                            if state.direction == SignalType.LONG:
+                                exit_price = current_bid
+                            elif state.direction == SignalType.SHORT:
+                                exit_price = current_ask
+                            else:
+                                exit_price = current_price
                             positions_payload.append({
                                 "direction": direction_str,
                                 "volume": float(current_lots),
                                 "current_lots": float(current_lots),
                                 "entry_price": float(state.entry_price),
                                 "current_price": float(current_price),
+                                "bid": float(current_bid),
+                                "ask": float(current_ask),
+                                "exit_price": float(exit_price),
                                 "stop_loss": float(state.current_sl or state.initial_sl or 0.0),
                                 "take_profit": float(state.initial_tp or 0.0),
                                 "unrealized_pnl": float(state.unrealized_pnl_usd),
@@ -2677,18 +2718,35 @@ def serve_v4() -> None:
                             entropy=float(result.market_entropy) if 'result' in locals() and result else 0.0
                         )
                         
-                        # Fire and forget
-                        if runtime_store is not None:
-                            asyncio.create_task(runtime_store.write_snapshot(snapshot))
-                        if ws_server is not None:
-                            asyncio.create_task(ws_server.broadcast(snapshot))
-                            asyncio.create_task(ws_server.broadcast_positions(positions_payload))
-                        if data_store is not None:
-                            data_store.enqueue_positions(ts=now, positions=positions_payload)
+                        if snapshot_task is not None:
+                            try:
+                                snapshot_queue.put_nowait((snapshot, positions_payload, now))
+                            except asyncio.QueueFull:
+                                try:
+                                    snapshot_queue.get_nowait()
+                                    snapshot_queue.task_done()
+                                except asyncio.QueueEmpty:
+                                    pass
+                                try:
+                                    snapshot_queue.put_nowait((snapshot, positions_payload, now))
+                                except asyncio.QueueFull:
+                                    logger.debug("Snapshot queue full, dropping latest snapshot")
                         last_snapshot_time = now
         
         finally:
             # Cleanup
+            if snapshot_task is not None:
+                while True:
+                    try:
+                        snapshot_queue.put_nowait(None)
+                        break
+                    except asyncio.QueueFull:
+                        try:
+                            snapshot_queue.get_nowait()
+                            snapshot_queue.task_done()
+                        except asyncio.QueueEmpty:
+                            break
+                await snapshot_task
             if runtime_store is not None:
                 await runtime_store.close()
             if data_store is not None:
