@@ -12,6 +12,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from datetime import datetime, date, timedelta
+from zoneinfo import ZoneInfo
 from typing import Any
 from zoneinfo import ZoneInfo
 
@@ -76,7 +77,7 @@ class RiskManager:
     def reset_daily(self) -> None:
         """Reset daily counters (call at start of new day)."""
         self._daily_pnl = 0.0
-        self._current_date = self._current_trading_day()
+        self._current_date = self._current_trading_date()
         
         # Don't reset halt if it's from consecutive losses
         if self._halt_reason == RiskEvent.DAILY_LOSS_LIMIT:
@@ -103,7 +104,7 @@ class RiskManager:
             return False, f"Trading halted: {self._halt_reason}"
         
         # Reset daily counters if new day
-        today = self._current_trading_day()
+        today = self._current_trading_date()
         if self._current_date != today:
             self.reset_daily()
         
@@ -248,17 +249,11 @@ class RiskManager:
                 limit=self.config.max_position_usd,
             )
 
-    def _current_trading_day(self) -> date:
-        """Get the current trading day based on configured timezone and cutoff."""
-        now = datetime.now(ZoneInfo(self.config.timezone))
-        cutoff_hour = self.config.trading_day_cutoff
-        if cutoff_hour:
-            cutoff_reached = (
-                now.hour,
-                now.minute,
-                now.second,
-                now.microsecond,
-            ) >= (cutoff_hour, 0, 0, 0)
-            if cutoff_reached:
-                return (now + timedelta(days=1)).date()
+    def _current_trading_date(self) -> date:
+        """Get the current trading date using configured timezone/cutoff."""
+        tzinfo = ZoneInfo(self.config.timezone)
+        now = datetime.now(tzinfo)
+        cutoff = self.config.trading_day_cutoff_hour
+        if cutoff:
+            now = now - timedelta(hours=cutoff)
         return now.date()
