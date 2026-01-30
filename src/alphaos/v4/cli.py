@@ -1493,8 +1493,15 @@ def serve_v4() -> None:
         # ================================================================
         ws_server = None
         try:
-            ws_host = "0.0.0.0"
-            ws_server = WSRuntimeServer(host=ws_host, port=int(args.ws_port))
+            ws_host = api_cfg.api.ws_host if api_cfg is not None else "127.0.0.1"
+            ws_allowed_origins = api_cfg.api.ws_allowed_origins if api_cfg is not None else None
+            ws_auth_tokens = api_cfg.api.ws_auth_tokens if api_cfg is not None else None
+            ws_server = WSRuntimeServer(
+                host=ws_host,
+                port=int(args.ws_port),
+                allowed_origins=ws_allowed_origins,
+                auth_tokens=ws_auth_tokens,
+            )
             await ws_server.start()
             display_host = "localhost" if ws_host in ("0.0.0.0", "127.0.0.1") else ws_host
             logger.info(
