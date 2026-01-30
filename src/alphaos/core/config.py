@@ -774,6 +774,24 @@ class SystemConfig(BaseModel):
     timezone: str = "UTC"
 
 
+class ApiConfig(BaseModel):
+    """API/UI access configuration."""
+    cors_allow_origins: list[str] = Field(
+        default_factory=lambda: [
+            "http://localhost:5173",
+            "http://127.0.0.1:5173",
+        ]
+    )
+    ws_allowed_origins: list[str] = Field(
+        default_factory=lambda: [
+            "http://localhost:5173",
+            "http://127.0.0.1:5173",
+        ]
+    )
+    ws_auth_tokens: list[str] = Field(default_factory=list)
+    ws_host: str = "127.0.0.1"
+
+
 class AlphaOSConfig(BaseModel):
     """
     Complete AlphaOS configuration.
@@ -790,6 +808,7 @@ class AlphaOSConfig(BaseModel):
     symbol: str = "XAUUSD"
     symbol_info: SymbolInfo = Field(default_factory=SymbolInfo)
     system: SystemConfig = Field(default_factory=SystemConfig)
+    api: ApiConfig = Field(default_factory=ApiConfig)
     database: DatabaseConfig = Field(default_factory=DatabaseConfig)
     signal_database: DatabaseConfig | None = None  # Separate database for signals
     zeromq: ZeroMQConfig = Field(default_factory=ZeroMQConfig)

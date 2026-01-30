@@ -1,8 +1,10 @@
 import asyncio
 import json
 import logging
-import websockets
 from typing import Set, Any, Iterable
+from urllib.parse import parse_qs, urlparse
+
+import websockets
 from alphaos.monitoring.runtime_state import RuntimeSnapshot
 
 logger = logging.getLogger(__name__)
@@ -12,9 +14,17 @@ class WSRuntimeServer:
     WebSocket Server for pushing Runtime State Snapshots to UI (port 8765).
     Acts as a bridge between Backend SSOT and Frontend UI.
     """
-    def __init__(self, host: str = "0.0.0.0", port: int = 8765):
+    def __init__(
+        self,
+        host: str = "127.0.0.1",
+        port: int = 8765,
+        allowed_origins: Iterable[str] | None = None,
+        auth_tokens: Iterable[str] | None = None,
+    ):
         self.host = host
         self.port = port
+        self.allowed_origins = set(allowed_origins or [])
+        self.auth_tokens = set(auth_tokens or [])
         self.clients: Set[websockets.WebSocketServerProtocol] = set()
         self.server = None
         self._last_snapshot: RuntimeSnapshot | None = None
@@ -53,7 +63,42 @@ class WSRuntimeServer:
         self._last_positions = positions_list
         await self.broadcast_message("position", {"positions": positions_list})
 
+    def _is_origin_allowed(self, origin: str | None) -> bool:
+        if not self.allowed_origins:
+            return True
+        return origin in self.allowed_origins
+
+    def _extract_token(self, websocket: websockets.WebSocketServerProtocol) -> str | None:
+        parsed = urlparse(websocket.path or "")
+        params = parse_qs(parsed.query)
+        token = params.get("token", [None])[0]
+        if token:
+            return token
+        auth_header = websocket.request_headers.get("Authorization", "")
+        if auth_header.lower().startswith("bearer "):
+            candidate = auth_header[7:].strip()
+            return candidate or None
+        header_token = websocket.request_headers.get("X-AlphaOS-Token")
+        return header_token
+
+    def _is_token_valid(self, token: str | None) -> bool:
+        if not self.auth_tokens:
+            return True
+        return token in self.auth_tokens
+
     async def _handler(self, websocket: websockets.WebSocketServerProtocol):
+        origin = websocket.request_headers.get("Origin")
+        token = self._extract_token(websocket)
+        if not self._is_origin_allowed(origin) or not self._is_token_valid(token):
+            logger.warning(
+                "Rejected WS client",
+                origin=origin,
+                has_token=bool(token),
+                path=websocket.path,
+            )
+            await websocket.close(code=1008, reason="Forbidden")
+            return
+
         self.clients.add(websocket)
         try:
             # Send welcome & last snapshot immediately
@@ -72,7 +117,7 @@ class WSRuntimeServer:
             # Keep connection open
             await websocket.wait_closed()
         finally:
-            self.clients.remove(websocket)
+            self.clients.discard(websocket)
 
 if __name__ == "__main__":
     import struct
