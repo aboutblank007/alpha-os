@@ -534,12 +534,20 @@ class ModelGuardianConfig(BaseModel):
     lock_file_path: str = "logs/model_guardian_lock.json"
 
 
+class WSRuntimeConfig(BaseModel):
+    """WebSocket runtime server configuration."""
+    host: str = "127.0.0.1"
+    allowed_origins: list[str] = Field(default_factory=list)
+    auth_tokens: list[str] = Field(default_factory=list)
+
+
 class MonitoringConfig(BaseModel):
     """Monitoring configuration."""
     prometheus_port: int = 9090
     metrics_prefix: str = "alphaos"
     enable_profiling: bool = False
     model_guardian: ModelGuardianConfig = Field(default_factory=ModelGuardianConfig)
+    ws_runtime: WSRuntimeConfig = Field(default_factory=WSRuntimeConfig)
     data_store: "DataStoreConfig" = Field(default_factory=lambda: DataStoreConfig())
 
 

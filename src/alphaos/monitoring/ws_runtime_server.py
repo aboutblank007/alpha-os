@@ -29,6 +29,8 @@ class WSRuntimeServer:
         self.server = None
         self._last_snapshot: RuntimeSnapshot | None = None
         self._last_positions: list[dict[str, Any]] | None = None
+        self.allowed_origins = {origin for origin in (allowed_origins or []) if origin}
+        self.auth_tokens = {token for token in (auth_tokens or []) if token}
         
     async def start(self):
         self.server = await websockets.serve(self._handler, self.host, self.port)
