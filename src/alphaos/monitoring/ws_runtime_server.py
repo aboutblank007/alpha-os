@@ -97,7 +97,7 @@ if __name__ == "__main__":
         
         logger.info("Connected to MT5 ZMQ at tcp://127.0.0.1:5555")
         
-        from alphaos.monitoring.runtime_state import RuntimeSnapshot, MarketPhase
+        from alphaos.monitoring.runtime_state import RuntimeSnapshot
         import time
         from datetime import datetime
         
@@ -105,7 +105,7 @@ if __name__ == "__main__":
             timestamp=0,
             symbol="XAUUSD",
             ticks_total=0,
-            market_phase=MarketPhase.UNKNOWN,
+            market_phase="UNKNOWN",
             temperature=0.0,
             entropy=0.0
         )
