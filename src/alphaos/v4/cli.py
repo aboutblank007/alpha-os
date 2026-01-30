@@ -1923,6 +1923,35 @@ def serve_v4() -> None:
                 )
             return result
         
+        async def _snapshot_worker(
+            queue: asyncio.Queue[tuple[RuntimeSnapshot, list[dict[str, Any]], float] | None],
+        ) -> None:
+            while True:
+                item = await queue.get()
+                if item is None:
+                    queue.task_done()
+                    break
+                snapshot, positions_payload, ts = item
+                try:
+                    if runtime_store is not None:
+                        await runtime_store.write_snapshot(snapshot)
+                    if ws_server is not None:
+                        await ws_server.broadcast(snapshot)
+                        await ws_server.broadcast_positions(positions_payload)
+                    if data_store is not None:
+                        data_store.enqueue_positions(ts=ts, positions=positions_payload)
+                except Exception as exc:
+                    logger.error(f"Snapshot worker error: {exc}")
+                finally:
+                    queue.task_done()
+
+        snapshot_queue: asyncio.Queue[tuple[RuntimeSnapshot, list[dict[str, Any]], float] | None] = asyncio.Queue(
+            maxsize=2
+        )
+        snapshot_task: asyncio.Task[None] | None = None
+        if runtime_store is not None or ws_server is not None or data_store is not None:
+            snapshot_task = asyncio.create_task(_snapshot_worker(snapshot_queue))
+
         tick_count = 0
         last_snapshot_time = 0.0
         bar_count_prev = 0
@@ -2622,18 +2651,35 @@ def serve_v4() -> None:
                             entropy=float(result.market_entropy) if 'result' in locals() and result else 0.0
                         )
                         
-                        # Fire and forget
-                        if runtime_store is not None:
-                            asyncio.create_task(runtime_store.write_snapshot(snapshot))
-                        if ws_server is not None:
-                            asyncio.create_task(ws_server.broadcast(snapshot))
-                            asyncio.create_task(ws_server.broadcast_positions(positions_payload))
-                        if data_store is not None:
-                            data_store.enqueue_positions(ts=now, positions=positions_payload)
+                        if snapshot_task is not None:
+                            try:
+                                snapshot_queue.put_nowait((snapshot, positions_payload, now))
+                            except asyncio.QueueFull:
+                                try:
+                                    snapshot_queue.get_nowait()
+                                    snapshot_queue.task_done()
+                                except asyncio.QueueEmpty:
+                                    pass
+                                try:
+                                    snapshot_queue.put_nowait((snapshot, positions_payload, now))
+                                except asyncio.QueueFull:
+                                    logger.debug("Snapshot queue full, dropping latest snapshot")
                         last_snapshot_time = now
         
         finally:
             # Cleanup
+            if snapshot_task is not None:
+                while True:
+                    try:
+                        snapshot_queue.put_nowait(None)
+                        break
+                    except asyncio.QueueFull:
+                        try:
+                            snapshot_queue.get_nowait()
+                            snapshot_queue.task_done()
+                        except asyncio.QueueEmpty:
+                            break
+                await snapshot_task
             if runtime_store is not None:
                 await runtime_store.close()
             if data_store is not None:
