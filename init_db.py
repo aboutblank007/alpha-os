@@ -26,7 +26,7 @@ async def init_db():
                 market_phase TEXT,
                 temperature DOUBLE PRECISION,
                 entropy DOUBLE PRECISION,
-                db_snapshot_count BIGINT
+                snapshot_count BIGINT
             );
         """))
         print("Table created successfully.")

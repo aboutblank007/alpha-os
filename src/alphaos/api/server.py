@@ -79,7 +79,7 @@ def create_app(config: AlphaOSConfig, ui_dist_path: str | Path | None = None) ->
     # CORS - Allow UI to connect
     app.add_middleware(
         CORSMiddleware,
-        allow_origins=["*"],
+        allow_origins=config.api.cors_allow_origins,
         allow_credentials=True,
         allow_methods=["*"],
         allow_headers=["*"],
@@ -114,12 +114,15 @@ def create_app(config: AlphaOSConfig, ui_dist_path: str | Path | None = None) ->
                 payload: list[dict[str, Any]] = []
                 for row in rows:
                     data = dict(row)
-                    if "timestamp" not in data and "time" in data:
-                        ts = data["time"]
-                        try:
-                            data["timestamp"] = ts.timestamp() if ts is not None else None
-                        except Exception:
-                            data["timestamp"] = None
+                    ts_value = data.get("timestamp") or data.get("time")
+                    if ts_value is not None:
+                        if isinstance(ts_value, (int, float)):
+                            data["timestamp"] = ts_value
+                        else:
+                            try:
+                                data["timestamp"] = ts_value.timestamp()
+                            except Exception:
+                                data["timestamp"] = ts_value
                     payload.append(data)
                 return payload
             except Exception as e:
