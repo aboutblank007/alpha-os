@@ -132,6 +132,18 @@ def _set_nested_value(config: dict, key: str, value: Any) -> None:
             target[path[-1]] = value
 
 
+def _has_nested_key(config: dict[str, Any], path: tuple[str, ...]) -> bool:
+    """
+    Check whether a nested key exists in a dict without raising.
+    """
+    current: Any = config
+    for part in path:
+        if not isinstance(current, dict) or part not in current:
+            return False
+        current = current[part]
+    return True
+
+
 def train_v4() -> None:
     """Entry point for alphaos-v4-train command."""
     parser = argparse.ArgumentParser(
