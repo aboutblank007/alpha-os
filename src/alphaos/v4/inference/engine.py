@@ -1358,16 +1358,15 @@ class InferenceEngineV4:
         if trend_alignment == "COUNTER" and self.config.counter_trend_require_structure:
             window = int(self.config.counter_trend_confirm_window_bars)
             bars_since = self._bar_count - self._last_structure_event_bar
-            # window=0 视为不限制确认窗口，仅要求方向一致即可通过结构确认。
-            no_window_limit = window <= 0
+            # window=0 表示不限制结构确认窗口（只要最近结构方向匹配即可）
             structure_ok = (
                 self._last_structure_event_dir != 0 and
                 alignment_direction != 0 and
                 self._last_structure_event_dir == alignment_direction and
-                (no_window_limit or bars_since <= window)
+                (window == 0 or (window > 0 and bars_since <= window))
             )
             if not structure_ok:
-                window_desc = "0(no_limit)" if no_window_limit else str(window)
+                window_desc = "0(no_limit)" if window == 0 else str(window)
                 result.filtered_reason = (
                     f"COUNTER_TREND_NO_STRUCTURE (window={window_desc}, "
                     f"last_dir={self._last_structure_event_dir}, bars_since={bars_since})"
