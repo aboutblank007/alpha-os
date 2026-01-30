@@ -16,13 +16,15 @@ class WSRuntimeServer:
     """
     def __init__(
         self,
-        host: str = "0.0.0.0",
+        host: str = "127.0.0.1",
         port: int = 8765,
         allowed_origins: Iterable[str] | None = None,
         auth_tokens: Iterable[str] | None = None,
     ):
         self.host = host
         self.port = port
+        self.allowed_origins = set(allowed_origins or [])
+        self.auth_tokens = set(auth_tokens or [])
         self.clients: Set[websockets.WebSocketServerProtocol] = set()
         self.server = None
         self._last_snapshot: RuntimeSnapshot | None = None
@@ -47,10 +49,15 @@ class WSRuntimeServer:
             "type": msg_type,
             "data": data,
         })
-        await asyncio.gather(
-            *[client.send(message) for client in self.clients],
+        clients = list(self.clients)
+        results = await asyncio.gather(
+            *[client.send(message) for client in clients],
             return_exceptions=True
         )
+        for client, result in zip(clients, results, strict=False):
+            if isinstance(result, Exception):
+                logger.warning("WebSocket send failed; removing client: %s", result)
+                self.clients.discard(client)
 
     async def broadcast(self, snapshot: RuntimeSnapshot) -> None:
         """Broadcast snapshot to all connected clients."""
@@ -63,48 +70,40 @@ class WSRuntimeServer:
         self._last_positions = positions_list
         await self.broadcast_message("position", {"positions": positions_list})
 
-    def _get_origin(self, websocket: websockets.WebSocketServerProtocol) -> str | None:
-        return websocket.request_headers.get("Origin")
+    def _is_origin_allowed(self, origin: str | None) -> bool:
+        if not self.allowed_origins:
+            return True
+        return origin in self.allowed_origins
 
-    def _get_token(self, websocket: websockets.WebSocketServerProtocol) -> str | None:
-        auth_header = websocket.request_headers.get("Authorization")
-        if auth_header:
-            if auth_header.lower().startswith("bearer "):
-                return auth_header.split(" ", 1)[1].strip()
-            return auth_header.strip()
+    def _extract_token(self, websocket: websockets.WebSocketServerProtocol) -> str | None:
+        parsed = urlparse(websocket.path or "")
+        params = parse_qs(parsed.query)
+        token = params.get("token", [None])[0]
+        if token:
+            return token
+        auth_header = websocket.request_headers.get("Authorization", "")
+        if auth_header.lower().startswith("bearer "):
+            candidate = auth_header[7:].strip()
+            return candidate or None
+        header_token = websocket.request_headers.get("X-AlphaOS-Token")
+        return header_token
 
-        header_token = websocket.request_headers.get("X-Auth-Token")
-        if header_token:
-            return header_token.strip()
-
-        query = urlparse(websocket.path or "").query
-        params = parse_qs(query)
-        for key in ("token", "auth_token", "access_token"):
-            if key in params and params[key]:
-                return params[key][0]
-        return None
-
-    async def _reject(self, websocket: websockets.WebSocketServerProtocol, reason: str) -> None:
-        logger.warning("WS connection rejected", reason=reason, path=websocket.path)
-        await websocket.close(code=1008, reason=reason)
-
-    async def _validate_connection(self, websocket: websockets.WebSocketServerProtocol) -> bool:
-        if self.allowed_origins:
-            origin = self._get_origin(websocket)
-            if origin not in self.allowed_origins:
-                await self._reject(websocket, "origin_not_allowed")
-                return False
-
-        if self.auth_tokens:
-            token = self._get_token(websocket)
-            if token not in self.auth_tokens:
-                await self._reject(websocket, "invalid_token")
-                return False
-
-        return True
+    def _is_token_valid(self, token: str | None) -> bool:
+        if not self.auth_tokens:
+            return True
+        return token in self.auth_tokens
 
     async def _handler(self, websocket: websockets.WebSocketServerProtocol):
-        if not await self._validate_connection(websocket):
+        origin = websocket.request_headers.get("Origin")
+        token = self._extract_token(websocket)
+        if not self._is_origin_allowed(origin) or not self._is_token_valid(token):
+            logger.warning(
+                "Rejected WS client",
+                origin=origin,
+                has_token=bool(token),
+                path=websocket.path,
+            )
+            await websocket.close(code=1008, reason="Forbidden")
             return
 
         self.clients.add(websocket)
@@ -150,7 +149,7 @@ if __name__ == "__main__":
         
         logger.info("Connected to MT5 ZMQ at tcp://127.0.0.1:5555")
         
-        from alphaos.monitoring.runtime_state import RuntimeSnapshot, MarketPhase
+        from alphaos.monitoring.runtime_state import RuntimeSnapshot
         import time
         from datetime import datetime
         
@@ -158,7 +157,7 @@ if __name__ == "__main__":
             timestamp=0,
             symbol="XAUUSD",
             ticks_total=0,
-            market_phase=MarketPhase.UNKNOWN,
+            market_phase="UNKNOWN",
             temperature=0.0,
             entropy=0.0
         )
