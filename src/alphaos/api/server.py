@@ -104,8 +104,9 @@ def create_app(config: AlphaOSConfig, ui_dist_path: str | Path | None = None) ->
             try:
                 query = text(
                     """
-                    SELECT * FROM runtime_state
-                    ORDER BY timestamp DESC
+                    SELECT *, time AS timestamp
+                    FROM runtime_state
+                    ORDER BY time DESC
                     LIMIT :limit OFFSET :offset
                     """
                 )
@@ -114,12 +115,15 @@ def create_app(config: AlphaOSConfig, ui_dist_path: str | Path | None = None) ->
                 payload: list[dict[str, Any]] = []
                 for row in rows:
                     data = dict(row)
-                    if "timestamp" not in data and "time" in data:
-                        ts = data["time"]
-                        try:
-                            data["timestamp"] = ts.timestamp() if ts is not None else None
-                        except Exception:
-                            data["timestamp"] = None
+                    ts_value = data.get("timestamp") or data.get("time")
+                    if ts_value is not None:
+                        if isinstance(ts_value, (int, float)):
+                            data["timestamp"] = ts_value
+                        else:
+                            try:
+                                data["timestamp"] = ts_value.timestamp()
+                            except Exception:
+                                data["timestamp"] = ts_value
                     payload.append(data)
                 return payload
             except Exception as e:
