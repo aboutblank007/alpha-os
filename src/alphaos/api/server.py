@@ -105,7 +105,7 @@ def create_app(config: AlphaOSConfig, ui_dist_path: str | Path | None = None) ->
                 query = text(
                     """
                     SELECT * FROM runtime_state
-                    ORDER BY timestamp DESC
+                    ORDER BY time DESC
                     LIMIT :limit OFFSET :offset
                     """
                 )
