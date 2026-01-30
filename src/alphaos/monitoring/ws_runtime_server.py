@@ -37,10 +37,15 @@ class WSRuntimeServer:
             "type": msg_type,
             "data": data,
         })
-        await asyncio.gather(
-            *[client.send(message) for client in self.clients],
+        clients = list(self.clients)
+        results = await asyncio.gather(
+            *[client.send(message) for client in clients],
             return_exceptions=True
         )
+        for client, result in zip(clients, results, strict=False):
+            if isinstance(result, Exception):
+                logger.warning("WebSocket send failed; removing client: %s", result)
+                self.clients.discard(client)
 
     async def broadcast(self, snapshot: RuntimeSnapshot) -> None:
         """Broadcast snapshot to all connected clients."""
