@@ -34,7 +34,7 @@ class RuntimeStore:
                     market_phase TEXT,
                     temperature DOUBLE PRECISION,
                     entropy DOUBLE PRECISION,
-                    snapshot_count BIGINT
+                    db_snapshot_count BIGINT
                 );
             """))
             
@@ -61,7 +61,7 @@ class RuntimeStore:
                         INSERT INTO runtime_state (
                             time, symbol, warmup_progress, ticks_total, 
                             open_positions, guardian_halt, exit_v21_enabled,
-                            market_phase, temperature, entropy, snapshot_count
+                            market_phase, temperature, entropy, db_snapshot_count
                         ) VALUES (
                             to_timestamp(:ts), :symbol, :warmup, :ticks, 
                             :pos, :halt, :exit_v21,
