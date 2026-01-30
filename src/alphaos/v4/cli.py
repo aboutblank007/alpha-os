@@ -2592,12 +2592,23 @@ def serve_v4() -> None:
                                 direction_str = None
                             current_lots = state.current_lots if state.current_lots > 0 else state.entry_lots
                             current_price = state.current_mid if state.current_mid > 0 else state.entry_price
+                            current_bid = state.current_bid if state.current_bid > 0 else current_price
+                            current_ask = state.current_ask if state.current_ask > 0 else current_price
+                            if state.direction == SignalType.LONG:
+                                exit_price = current_bid
+                            elif state.direction == SignalType.SHORT:
+                                exit_price = current_ask
+                            else:
+                                exit_price = current_price
                             positions_payload.append({
                                 "direction": direction_str,
                                 "volume": float(current_lots),
                                 "current_lots": float(current_lots),
                                 "entry_price": float(state.entry_price),
                                 "current_price": float(current_price),
+                                "bid": float(current_bid),
+                                "ask": float(current_ask),
+                                "exit_price": float(exit_price),
                                 "stop_loss": float(state.current_sl or state.initial_sl or 0.0),
                                 "take_profit": float(state.initial_tp or 0.0),
                                 "unrealized_pnl": float(state.unrealized_pnl_usd),
