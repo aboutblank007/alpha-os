@@ -1,0 +1,527 @@
+# AlphaOS v4 Configuration - XAUUSD
+# 
+# 基于 72M tick 数据分析的优化配置
+# 数据时间范围: 2025-01-02 ~ 2025-01-29 (27天)
+# 
+# 使用方式: alphaos-v4-train --config configs/v4/xauusd.yaml --data data/XAUUSD_Ticks.csv
+#
+# 注意: CLI 参数优先级高于配置文件（允许覆盖）
+
+# =============================================================================
+# Symbol 配置
+# =============================================================================
+symbol: XAUUSD
+symbol_info:
+  digits: 2           # 小数位数
+  point: 0.01         # 最小变动单位 ($0.01)
+  contract_size: 100  # 合约大小（1手=100盎司）
+  # 数据特征：平均价格 ~$2699, 平均点差 0.52 (1.9bps)
+
+# =============================================================================
+# Sampling 配置 (SamplingConfig)
+# =============================================================================
+# 数据分析结果:
+#   - 平均 tick 间隔: 474ms (中位数 104ms)
+#   - 估计 9.6 ticks/秒
+#   - 100 ticks/bar ≈ 0.79 分钟/bar (适中交易频率)
+#   - 200 ticks/bar ≈ 1.58 分钟/bar (较慢，更稳定)
+sampling:
+  mode: "volume_bars"          # volume_bars | tick_imbalance
+  volume_source: "tick_count"  # real | tick_count | synthetic
+  target_volume: 100           # ticks per bar
+  
+  # Tick Imbalance Bars 参数（mode=tick_imbalance 时使用）
+  initial_expected_ticks: 50.0
+  initial_expected_imbalance: 0.5
+  ewma_alpha: 0.1
+  tick_rule_gamma: 0.95
+  tick_rule_threshold: 0.5
+  
+  # 通用参数
+  max_buffer_size: 500
+  synthetic_base_volume: 100.0
+
+# =============================================================================
+# Denoise 配置 (DenoiseConfig)
+# =============================================================================
+# 数据分析结果:
+#   - 单 tick 噪声: 0.1 bps (很小)
+#   - 适合 adaptive Kalman 模式
+denoise:
+  kalman:
+    enabled: true
+    process_variance: 0.1        # 状态转移噪声方差 Q
+    measurement_variance: 1.0    # 测量噪声方差 R
+    initial_uncertainty: 100.0   # 初始估计方差 P0
+    use_adaptive: true
+  
+  wavelet:
+    enabled: false
+    wavelet: "db4"
+    level: null                  # null = 自动确定
+    threshold_mode: "soft"
+    threshold_rule: "universal"
+
+# =============================================================================
+# Features 配置 (FeatureConfig)
+# =============================================================================
+# 数据分析结果:
+#   - 滚动波动率分布: P50 = 0.000136σ, P90 = 0.000204σ
+#   - 建议使用 20-100 bar 窗口
+features:
+  # 滚动窗口参数
+  zscore_window: 100           # Z-Score 计算窗口
+  volatility_window: 20        # 波动率计算窗口
+  ofi_window: 20               # OFI 计算窗口
+  kyle_lambda_window: 50       # Kyle Lambda 计算窗口
+  thermo_window: 50            # 热力学指标窗口
+  
+  # 热力学阈值（v4.1 SSOT）
+  thermodynamics:
+    temperature:
+      frozen: 0.000001
+      laminar: 0.000005
+      turbulent: 0.00002
+    entropy:
+      trend: 0.3
+      noise: 0.7
+    scale: 1000000.0
+  
+  # EWMA 参数
+  tick_intensity_alpha: 0.1    # Tick 强度衰减
+  micro_vol_lambda: 0.94       # 微观波动率 EWMA
+  
+  # VPIN 配置
+  vpin:
+    bucket_volume: 1000        # 单个 bucket 的成交量阈值
+    n_buckets: 50              # 滚动 bucket 数量
+    
+  # Z-Score 裁剪
+  clip_zscore: true
+  zscore_clip_value: 5.0
+
+# =============================================================================
+# ML 友好特征配置 (MLFeatureConfig)
+# =============================================================================
+# 新的 ML 特征模块配置
+ml_features:
+  # FVG 特征
+  fvg_enabled: true
+  fvg:
+    min_size_bps: 0.5          # 与 primary.min_fvg_size_bps 保持一致，避免 SL=0.0
+    max_age_bars: 50           # FVG 有效期
+    max_active_fvgs: 10        # 最多跟踪的活跃 FVG
+    atr_period: 14             # ATR 归一化周期
+  
+  # 15m SuperTrend 特征
+  supertrend_15m_enabled: true
+  supertrend_15m:
+    pivot_lookback: 2
+    atr_period: 10
+    atr_factor: 3.0
+    slope_window: 5
+  aggregation_interval_15m: 900  # 15 分钟 = 900 秒
+  
+  # 时间/Session 特征
+  time_enabled: true
+  time:
+    timezone: "UTC"
+    session_open_window_minutes: 30
+    session_close_window_minutes: 30
+  
+  # 交叉特征
+  interaction_enabled: true
+
+# =============================================================================
+# 多 Horizon 标签配置 (MultiHorizonConfig)
+# =============================================================================
+multi_horizon_labels:
+  horizons: [5, 10, 20]        # 预测窗口 (bars)
+  threshold_bps: 3.0           # 分类阈值 (3 bps = 0.03%)
+  use_log_returns: true
+
+# =============================================================================
+# Primary Engine 配置 (PrimaryEngineConfig)
+# =============================================================================
+# 数据分析结果 (关键发现):
+#   - ATR(10) 平均 ≈ 2.0 bps (100-tick bars)
+#   - FVG 分布: P50 = 0.66 bps, P90 = 2.05 bps
+#   - min_fvg_size_bps = 3.0 只捕获 0.85% 信号 (太严格!)
+#   - min_fvg_size_bps = 0.5 捕获 15% 信号 (合理)
+#   - 趋势持续: P50 = 1 bar, P75 = 2 bars, P90 = 4 bars
+#   - min_trend_duration = 2 捕获 49% 趋势
+primary:
+  # PivotSuperTrend 参数 (TradingView 原版默认值)
+  pivot_lookback: 2            # ⚠️ TradingView 原版默认 prd=2
+  atr_period: 10               # ⚠️ TradingView 原版默认 Pd=10
+  atr_factor: 3.0              # ⚠️ TradingView 原版默认 Factor=3
+  
+  # FVG 参数 (数据驱动优化)
+  min_fvg_size_bps: 0.5        # P50 FVG = 0.66bps, 用 0.5 捕获 ~60%
+  max_fvg_age_bars: 30         # FVG 有效期
+  ce_tolerance_bps: 1.0        # CE 入场容差（≈半个点差）
+  
+  # 信号参数 (数据驱动优化)
+  min_trend_duration: 2        # 捕获 49% 趋势（P50=1, P75=2）
+  cooldown_bars: 3             # 信号冷却期
+  sl_buffer_bps: 5.0           # 止损缓冲
+  
+  # 信号模式
+  require_fvg: true            # 必须有 FVG 才触发信号
+  fvg_entry_mode: "immediate"  # immediate=FVG形成即入场 | ce_retracement=等回踩
+
+# =============================================================================
+# Meta-Labeling 配置 (MetaLabelConfig)
+# =============================================================================
+# 数据分析结果:
+#   - 20-bar 收益波动率: 6.44 bps
+#   - 30-bar 收益波动率: 7.80 bps
+#   - P10/P90 收益: -7.46 / +8.02 bps (20-bar)
+meta_labeling:
+  sample_weight_method: "return_based"  # uniform | return_based | time_decay
+  time_decay_half_life: 100
+  min_signals: 10
+  
+  # Triple Barrier 配置 (数据驱动)
+  triple_barrier:
+    upper_multiplier: 2.0      # 止盈 2σ (~13 bps @ 20-bar)
+    lower_multiplier: 1.5      # 止损 1.5σ (~10 bps, 非对称)
+    vertical_bars: 20          # 最大持仓 (基于收益分布)
+    
+    # 波动率计算
+    volatility_window: 20
+    volatility_type: "realized"
+    ewma_lambda: 0.94
+    
+    # 最小栏栅宽度
+    min_barrier_pct: 0.05      # 0.05% = 5 bps 最小
+    use_log_returns: true
+
+# =============================================================================
+# CfC 模型配置
+# =============================================================================
+cfc:
+  hidden_size: 64              # 隐藏层大小
+  num_layers: 2                # 层数
+  dropout: 0.1                 # Dropout 率
+  use_layer_norm: true         # 使用 LayerNorm
+  min_tau: 0.1                 # 最小时间常数
+  max_tau: 10.0                # 最大时间常数
+  learning_rate: 0.001         # 学习率
+  weight_decay: 0.00001        # 权重衰减
+
+# =============================================================================
+# XGBoost 配置 (RTX 3090 GPU 优化)
+# =============================================================================
+xgboost:
+  n_estimators: 500            # 增加树的数量（GPU 快）
+  max_depth: 6                 # 最大深度
+  learning_rate: 0.05          # 降低学习率配合更多树
+  tree_method: "hist"          # GPU hist 模式
+  eval_metric: "auc"
+  max_bin: 256
+  early_stopping_rounds: 30    # 早停轮数
+
+# =============================================================================
+# 训练配置 (RTX 3090 + 16核 + 64GB 优化)
+# =============================================================================
+training:
+  # 序列参数
+  sequence_length: 100         # CfC 输入序列长度
+  batch_size: 2048             # ⚡ RTX 3090 推荐 2048-4096
+  epochs: 50                   # 训练轮数
+  early_stopping_patience: 10  # 早停耐心
+  
+  # 交叉验证
+  cv_splits: 5                 # CV 折数
+  cv_embargo_pct: 0.01         # 1% 禁止期
+  use_cpcv: false              # 是否使用 Combinatorial Purged CV
+  cpcv_n_test_splits: 2        # CPCV 测试折数
+  
+  # 两阶段训练
+  train_cfc: true              # 是否训练 CfC 编码器
+  freeze_cfc_for_xgb: true     # XGBoost 阶段是否冻结 CfC
+  
+  # ========== 性能优化 (RTX 3090 + 16核) ==========
+  # DataLoader 多进程
+  num_workers: 8               # 16核心推荐 8-12
+  pin_memory: true             # CUDA 锁页内存
+  
+  # 混合精度训练（显著加速 + 省显存）
+  use_mixed_precision: true
+  mixed_precision_dtype: "bfloat16"  # RTX 3090 支持 BF16
+  
+  # torch.compile（首次编译慢，后续快）
+  use_torch_compile: false     # 可选开启
+  compile_mode: "reduce-overhead"
+  
+  # XGBoost GPU 参数
+  xgb_device: "cuda"
+  xgb_sampling_method: "gradient_based"  # GPU 专用梯度采样
+  xgb_grow_policy: "lossguide"
+  
+  # CfC 隐状态提取批大小
+  cfc_encoding_batch_size: 8192
+  
+  # 输出
+  output_dir: "models/v4"
+
+# =============================================================================
+# 评估配置 (训练端诊断指标)
+# =============================================================================
+# 核心理念：
+# - Accuracy 在不平衡数据集中不可信（只需预测多数类即可达到高准确率）
+# - 使用 Recall@TopQuantile 和 PR-AUC 更能反映实际表现
+# - 分位数阈值比固定 0.5 更适合 meta-model conditioner
+evaluation:
+  # 分位数阈值（评估用）
+  quantiles: [99, 95, 90, 85]   # 对应 top 1%, 5%, 10%, 15%
+  
+  # Temporal Recall 诊断（检测"事件抓住了但时间窗口错过了"）
+  temporal_recall:
+    enabled: true
+    lookahead_bars: 3          # 向后看的 bar 数
+  
+  # 分相位评估
+  phase_evaluation: true       # 按 ts_phase 分别统计 Recall@Quantile
+  
+  # 固定阈值对比（用于报告）
+  fixed_threshold: 0.5
+
+# 风险管理配置
+risk:
+  max_position_usd: 10000.0     # 最大名义仓位美元
+  max_daily_loss_pct: 2.0       # 每日最大亏损百分比
+  max_consecutive_losses: 5     # 连续亏损上限
+  min_temperature: 0.0          # 低温过滤阈值（临时放开，用于验证是否能触发下单）
+  max_entropy: 0.7              # 高熵过滤阈值
+  daily_loss_cap: 20000.0       # 兼容旧字段（逐步弃用）
+  max_drawdown_pct: 5.0         # 兼容旧字段（逐步弃用）
+
+# =============================================================================
+# 置信度门控配置 (推理端 - Staged Recall Release)
+# =============================================================================
+# 核心理念：
+# - 固定阈值（如 0.65）在不同市场状态下表现不一致
+# - 滚动分位数阈值可自适应模型信心分布漂移
+# - 按相位分层可实现 staged recall release
+confidence_gate:
+  # 阈值模式
+  # - "fixed": 使用固定 min_confidence（向后兼容）
+  # - "rolling_quantile": 使用滚动分位数阈值（推荐）
+  mode: "rolling_quantile"
+  
+  # Rolling buffer 大小（bar 数）
+  buffer_size: 2000
+  
+  # 基础分位数（默认 90，即 top 10% 才交易）
+  base_quantile: 80
+  
+  # ========== Cold Start 参数 (Hybrid 3-Stage) ==========
+  # Stage 1 HARD_FROZEN: buffer < min_required → 禁止交易
+  # Stage 2 FIXED_FALLBACK: min_required <= buffer < full_buffer → 固定阈值
+  # Stage 3 ROLLING_QUANTILE: buffer >= full_buffer → 滚动分位数
+  min_required: 200            # 降低到 200 以便更快开始 (原 500)
+  full_buffer: 1000            # 降低到 1000 以便更快进入滚动模式 (原 1500)
+  fixed_fallback_threshold: 0.60  # Stage 2 阈值 (原 0.70)
+  
+  # 阈值保护（防止极端情况）
+  floor: 0.05                  # 最小阈值（防止分位数过低导致过度交易）
+  ceiling: 0.9                 # 最大阈值（防止分位数过高导致永不交易）
+  
+  # 按相位分层分位数（staged recall release）
+  # 相位编码：0=FROZEN, 1=LAMINAR, 2=TURBULENT, 3=TRANSITION
+  quantile_by_phase:
+    FROZEN: 90                 # 冻结期更严格
+    LAMINAR: 80                # 顺势阶段更宽松
+    TURBULENT: 80              # 高波动放宽以提升触发率
+    TRANSITION: 80             # 过渡期适度放松
+  
+  # ========== ST(15m) 阈值调制（方向由 FVG 决定，ST 只调节门槛严格度） ==========
+  # 以 phase quantile 为基线：
+  # - 顺势(ALIGNED): q = min(phase_q, ST_ALIGNED) → 更宽松
+  # - 逆势(COUNTER): q = max(phase_q, ST_COUNTER) → 更严格
+  # - 未知(st_trend_15m=0): 使用 phase_q 不调制
+  quantile_by_trend:
+    ST_ALIGNED: 80             # 顺势：进一步放宽以增加触发
+    ST_COUNTER: 92             # 逆势：只放行 top 8%
+
+# =============================================================================
+# 推理运行参数 (Inference Runtime)
+# =============================================================================
+inference:
+  warmup_bars: 50
+  min_confidence: 0.60          # 兼容字段（SSOT 在 confidence_gate.fixed_fallback_threshold）
+  require_phase_transition: false
+  event_gate_mode: "fvg_event_or_decay"
+  trend_alignment_source: "primary"
+  fvg_event_window_bars: 5
+  fvg_decay_bars: 5
+  
+  # CfC delta_t 裁剪范围（秒）
+  delta_t_min: 0.001
+  delta_t_max: 100.0
+  
+  # 当 PrimaryEngine 未给出结构止损时的备用 SL
+  fallback_sl_atr_factor: 3.0
+  
+  # 诊断日志阈值与采样
+  diagnostic_confidence_threshold: 0.01
+  diagnostic_log_interval: 50
+  diagnostic_log_initial_bars: 10
+
+  # 逆势门控（结构确认 + 阈值提升 + 缩放仓位）
+  structure_lookback_bars: 20
+  counter_trend_require_structure: true
+  counter_trend_confirm_window_bars: 10
+  counter_trend_threshold_boost: 0.10
+  counter_trend_volume_scale: 0.5
+
+# =============================================================================
+# ZeroMQ 配置 (执行层)
+# =============================================================================
+zeromq:
+  tick_endpoint: "tcp://192.168.1.7:5555"
+  order_endpoint: "tcp://192.168.1.7:5556"
+  history_endpoint: "tcp://192.168.1.7:5559"
+  heartbeat_interval_ms: 1000
+  reconnect_delay_ms: 5000
+  recv_timeout_ms: 100
+  history_timeout_ms: 30000
+  history_snd_timeout_ms: 5000
+  order_recv_timeout_ms: 10000
+  order_snd_timeout_ms: 5000
+  tick_staleness_threshold_sec: 60
+
+# =============================================================================
+# 监控配置 (Model Guardian / Metrics)
+# =============================================================================
+monitoring:
+  model_guardian:
+    enabled: true
+    nan_inf_check: true
+    state_saturation_threshold: 100.0
+    confidence_collapse_window: 10
+    confidence_collapse_threshold: 0.3
+    latency_threshold_ms: 200.0
+    lock_file_path: "logs/model_guardian_lock.json"
+  
+  metrics:
+    port: 9090
+    inference_latency_buckets: [0.001, 0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1.0]
+    tick_processing_latency_buckets: [0.001, 0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1.0]
+    order_latency_buckets: [0.01, 0.05, 0.1, 0.25, 0.5, 1.0, 2.0, 5.0]
+
+# =============================================================================
+# 健康检查配置
+# =============================================================================
+health:
+  check_interval_sec: 30.0
+  tick_staleness_threshold_sec: 60
+  warmup_ticks_estimate: 200
+  critical_components: ["zmq", "model"]
+
+# =============================================================================
+# 执行层配置
+# =============================================================================
+execution:
+  # Align T-S phase thresholds with current market_temperature scale (~1e-6 to 1e-5)
+  ts_phase:
+    temp_low: 0.000002
+    temp_high: 0.00002
+    entropy_low: 0.3
+    entropy_high: 0.7
+
+  position_sizing:
+    mode: "kelly"
+    kelly_fraction: 0.25
+    kelly_max_fraction: 0.5
+    expected_edge_pct: 2.0
+    win_rate: 0.55
+    risk_per_trade_pct: 1.0
+    account_balance: 10000.0
+    risk_reward_ratio: 3.0
+    min_lots: 0.01
+    max_lots: 2.10
+    lot_step: 0.01
+    linear_conf_max: 0.80
+  
+  exit_v2:
+    be_trigger_usd: 15.0
+    be_offset_points: 1.0
+    partial_trigger_usd: 30.0
+    partial_ratio: 0.5
+    min_lot: 0.01
+    min_partial_lot: 0.01
+    trailing_distance_points: 5.0
+    trailing_step_points: 1.0
+    sl_modify_cooldown_sec: 1.0
+    trailing_respects_partial_price: true
+    point_value_usd: 1.0
+    price_precision: 2
+  
+  exit_v21:
+    min_hold_seconds: 30.0
+    modify_cooldown_sec: 2.0
+    min_sl_gap_price: 0.50
+    price_precision: 2
+    est_commission_usd_per_lot: 7.0
+    est_slippage_usd_per_lot: 2.0
+    cost_buffer_usd: 1.0
+    be_trigger_net_usd: 15.0
+    be_offset_price: 0.50
+    partial1_trigger_net_usd: 30.0
+    partial1_ratio: 0.5
+    min_lots_to_partial: 0.02
+    post_partial_cooldown_sec: 5.0
+    trail_start_net_usd: 25.0
+    trail_distance_price: 3.0
+    trail_step_price: 0.50
+    alignment_multipliers:
+      aligned:
+        be_trigger_mult: 1.3
+        trail_distance_mult: 1.2
+      counter:
+        be_trigger_mult: 0.7
+        trail_distance_mult: 0.8
+      unknown:
+        be_trigger_mult: 1.0
+        trail_distance_mult: 1.0
+    tick_value_usd_per_lot: 100.0
+
+  order_filters:
+    only_magic: 626790000
+    ignore_magic_zero: true
+    ignore_manual_positions: true
+    manage_existing_positions: false
+
+  price_guard:
+    enabled: true
+    max_spread_points: 60.0
+    max_slippage_points: 80.0
+    entry_band_points: 50.0
+    reject_if_outside_band: true
+
+  close_backoff:
+    enabled: true
+    max_attempts: 5
+    cooldown_sec: 2.0
+
+# =============================================================================
+# 启动与回放配置 (Boot / Replay)
+# =============================================================================
+boot:
+  warmup_only: false
+  warmup_then_live: true
+  replay_target_buffer: 2000
+  replay_csv_max_ticks: 200000
+  replay_window_sec: 86400
+  replay_pace_tps: 50000
+  replay_end_eps_ms: 1000
+  replay_max_ticks: 2000000
+  replay_max_duration_sec: 120
+  replay_socket_timeout_ms: 5000
+  replay_gap_threshold_ms: 30000
+  replay_time_monotonic_tolerance_ms: 1000
+  replay_max_consecutive_timeouts: 3
+  history_warmup_bars: 1440

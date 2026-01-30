@@ -1,0 +1,185 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* 
+  AlphaOS Premium Theme 
+  Palette: Obsidian / Slate / Electric Blue
+*/
+:root {
+    /* Backgrounds */
+    --bg-dark: #020617;        /* Slate 950 - Deepest background */
+    --bg-panel: #0f172a;       /* Slate 900 - Card/Panel background */
+    --bg-surface: #1e293b;     /* Slate 800 - Input/element background */
+    
+    /* Accents */
+    --primary: #38bdf8;        /* Sky 400 - Main Brand Color */
+    --primary-dim: rgba(56, 189, 248, 0.2);
+    --secondary: #818cf8;      /* Indigo 400 */
+    
+    /* Functional Colors */
+    --success: #34d399;        /* Emerald 400 */
+    --danger: #f87171;         /* Red 400 */
+    --warning: #fbbf24;        /* Amber 400 */
+    --info: #22d3ee;           /* Cyan 400 */
+    
+    /* Text */
+    --text-main: #f8fafc;      /* Slate 50 */
+    --text-muted: #94a3b8;     /* Slate 400 */
+    --text-dim: #64748b;       /* Slate 500 */
+    
+    /* Borders */
+    --border-subtle: #1e293b;  /* Slate 800 */
+    --border-highlight: #334155; /* Slate 700 */
+
+    /* Effects */
+    --glass-bg: rgba(15, 23, 42, 0.6);
+    --glass-border: rgba(56, 189, 248, 0.1);
+    --shadow-glow: 0 0 15px rgba(56, 189, 248, 0.3);
+    
+    /* Fonts */
+    --font-mono: 'JetBrains Mono', 'Fira Code', monospace;
+    --font-sans: 'Inter', system-ui, -apple-system, sans-serif;
+}
+
+body {
+    margin: 0;
+    background-color: var(--bg-dark);
+    color: var(--text-main);
+    font-family: var(--font-sans);
+    overflow: hidden;
+    -webkit-font-smoothing: antialiased;
+}
+
+/* Custom Scrollbar */
+::-webkit-scrollbar {
+    width: 6px;
+    height: 6px;
+}
+
+::-webkit-scrollbar-track {
+    background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+    background: var(--border-highlight);
+    border-radius: 3px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+    background: var(--text-dim);
+}
+
+/* Utility Classes */
+@layer utilities {
+    .font-mono-num {
+        font-feature-settings: "tnum";
+        font-variant-numeric: tabular-nums;
+    }
+}
+
+/* Custom Components */
+@layer components {
+    .glass-panel {
+        background: var(--glass-bg);
+        backdrop-filter: blur(12px);
+        -webkit-backdrop-filter: blur(12px);
+        border: 1px solid var(--glass-border);
+        box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -1px rgba(0, 0, 0, 0.06);
+    }
+    
+    .glass-card {
+        background: rgba(30, 41, 59, 0.4);
+        backdrop-filter: blur(8px);
+        border: 1px solid rgba(255, 255, 255, 0.05);
+        border-radius: 0.5rem;
+    }
+
+    .text-glow {
+        text-shadow: 0 0 10px var(--primary-dim);
+    }
+
+    .status-dot {
+        width: 8px;
+        height: 8px;
+        border-radius: 50%;
+        display: inline-block;
+    }
+    
+    .status-dot.active { background-color: var(--success); box-shadow: 0 0 8px var(--success); }
+    .status-dot.warning { background-color: var(--warning); box-shadow: 0 0 8px var(--warning); }
+    .status-dot.error { background-color: var(--danger); box-shadow: 0 0 8px var(--danger); }
+    .status-dot.inactive { background-color: var(--text-dim); }
+}
+
+/* React Flow Customization */
+.react-flow__node {
+    font-family: var(--font-mono);
+    border: none !important;
+    background: transparent !important;
+}
+
+.react-flow__edge-path {
+    stroke: var(--text-dim);
+    stroke-width: 1.5;
+    opacity: 0.4;
+}
+
+.react-flow__edge.animated .react-flow__edge-path {
+    stroke: var(--primary);
+    stroke-width: 2;
+    opacity: 0.8;
+    stroke-dasharray: 5;
+    animation: flowLine 30s linear infinite;
+}
+
+@keyframes flowLine {
+    from { stroke-dashoffset: 500; }
+    to { stroke-dashoffset: 0; }
+}
+
+/* Hide Attribution */
+.react-flow__attribution { display: none !important; }
+
+/* Node Styles */
+.node-wrapper {
+    background: linear-gradient(145deg, rgba(15, 23, 42, 0.9), rgba(30, 41, 59, 0.9));
+    border: 1px solid var(--border-highlight);
+    border-radius: 8px;
+    padding: 2px;
+    transition: all 0.3s ease;
+}
+
+.react-flow__node:hover .node-wrapper {
+    border-color: var(--primary);
+    box-shadow: 0 0 15px var(--primary-dim);
+    transform: translateY(-2px);
+}
+
+.react-flow__handle {
+    background: var(--text-dim);
+    width: 6px;
+    height: 6px;
+    border: none;
+}
+
+.react-flow__node:hover .react-flow__handle {
+    background: var(--primary);
+}
+
+.react-flow__controls {
+    background: var(--bg-panel);
+    border: 1px solid var(--border-highlight);
+    border-radius: 4px;
+    overflow: hidden;
+    box-shadow: 0 4px 6px rgba(0,0,0,0.3);
+}
+
+.react-flow__controls-button {
+    background: transparent;
+    border-bottom: 1px solid var(--border-highlight);
+    color: var(--text-muted);
+}
+.react-flow__controls-button:last-child { border-bottom: none; }
+.react-flow__controls-button:hover { background: var(--bg-surface); color: var(--text-main); }
+.react-flow__controls-button svg { fill: currentColor; }
