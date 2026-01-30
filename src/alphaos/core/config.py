@@ -232,6 +232,8 @@ class RiskConfig(BaseModel):
     max_consecutive_losses: int = 5
     min_temperature: float = 0.5
     max_entropy: float = 0.7
+    timezone: str = "UTC"
+    trading_day_cutoff_hour: int = 0  # Trading day cutoff in timezone (0 = midnight)
     gate: "RiskGateConfig" = Field(default_factory=lambda: RiskGateConfig())
 
 
