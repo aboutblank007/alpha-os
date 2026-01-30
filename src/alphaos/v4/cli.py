@@ -1434,6 +1434,7 @@ def serve_v4() -> None:
             be_trigger=exit_v21_config.be_trigger_net_usd,
             partial_trigger=exit_v21_config.partial1_trigger_net_usd,
         )
+        exit_v21_tick_value = float(exit_v21_config.tick_value_usd_per_lot or 0.0)
         
         logger.info(
             "Server components initialized",
@@ -1546,6 +1547,42 @@ def serve_v4() -> None:
                     )
             except Exception as e:
                 logger.warning("Symbol info fetch failed", error=str(e))
+        symbol_tick_value = float(symbol_info.get("tick_value", 0.0) or 0.0)
+        exit_v21_cfg_explicit = (
+            isinstance(yaml_config, dict)
+            and "execution" in yaml_config
+            and isinstance(yaml_config.get("execution"), dict)
+            and "exit_v21" in yaml_config.get("execution", {})
+            and isinstance(yaml_config["execution"].get("exit_v21"), dict)
+            and "tick_value_usd_per_lot" in yaml_config["execution"]["exit_v21"]
+        )
+        tick_value_threshold = 1e-3
+        if symbol_tick_value > 0:
+            if not exit_v21_cfg_explicit or exit_v21_tick_value <= 0:
+                logger.info(
+                    "Exit v2.1 tick_value not explicitly configured; using symbol info",
+                    config_tick_value=exit_v21_tick_value,
+                    symbol_tick_value=symbol_tick_value,
+                )
+                exit_v21_tick_value = symbol_tick_value
+                exit_v21_config.tick_value_usd_per_lot = symbol_tick_value
+            else:
+                denom = max(exit_v21_tick_value, symbol_tick_value, 1e-9)
+                diff_ratio = abs(exit_v21_tick_value - symbol_tick_value) / denom
+                if diff_ratio > tick_value_threshold:
+                    logger.warning(
+                        "Exit v2.1 tick_value differs from symbol info",
+                        config_tick_value=exit_v21_tick_value,
+                        symbol_tick_value=symbol_tick_value,
+                        diff_ratio=round(diff_ratio, 6),
+                        suggestion="Update execution.exit_v21.tick_value_usd_per_lot to match broker tick_value",
+                    )
+        elif exit_v21_tick_value <= 0:
+            logger.warning(
+                "Exit v2.1 tick_value unavailable; check execution.exit_v21.tick_value_usd_per_lot",
+                config_tick_value=exit_v21_tick_value,
+                symbol_tick_value=symbol_tick_value,
+            )
 
         # ================================================================
         # v4.0: Boot State Machine
@@ -2390,7 +2427,7 @@ def serve_v4() -> None:
                             risk_budget = max(0.0, equity * (risk_pct / 100.0))
 
                             tick_size = float(symbol_info.get("tick_size", 0.0) or 0.0)
-                            tick_value = float(symbol_info.get("tick_value", 0.0) or 0.0)
+                            tick_value = exit_v21_tick_value or float(symbol_info.get("tick_value", 0.0) or 0.0)
                             vol_min_sym = float(symbol_info.get("volume_min", 0.0) or 0.0)
                             vol_max_sym = float(symbol_info.get("volume_max", 0.0) or 0.0)
                             vol_step_sym = float(symbol_info.get("volume_step", 0.0) or 0.0)
