@@ -132,6 +132,18 @@ def _set_nested_value(config: dict, key: str, value: Any) -> None:
             target[path[-1]] = value
 
 
+def _has_nested_key(config: dict[str, Any], path: tuple[str, ...]) -> bool:
+    """
+    Check whether a nested key exists in a dict without raising.
+    """
+    current: Any = config
+    for part in path:
+        if not isinstance(current, dict) or part not in current:
+            return False
+        current = current[part]
+    return True
+
+
 def train_v4() -> None:
     """Entry point for alphaos-v4-train command."""
     parser = argparse.ArgumentParser(
@@ -1546,6 +1558,49 @@ def serve_v4() -> None:
                     )
             except Exception as e:
                 logger.warning("Symbol info fetch failed", error=str(e))
+        
+        tick_value_symbol = float(symbol_info.get("tick_value", 0.0) or 0.0)
+        tick_value_config = float(exit_v21_config.tick_value_usd_per_lot or 0.0)
+        tick_value_explicit = _has_nested_key(
+            yaml_config, ("execution", "exit_v21", "tick_value_usd_per_lot")
+        )
+        tick_value_tolerance = 0.01
+        tick_value_diff = abs(tick_value_config - tick_value_symbol)
+        tick_value_threshold = max(
+            1e-6, tick_value_tolerance * max(tick_value_config, tick_value_symbol, 1.0)
+        )
+        if tick_value_symbol > 0:
+            if not tick_value_explicit:
+                if tick_value_diff > tick_value_threshold:
+                    logger.warning(
+                        "Exit v2.1 tick_value not explicitly set; overriding with symbol info",
+                        config_tick_value=round(tick_value_config, 6),
+                        symbol_tick_value=round(tick_value_symbol, 6),
+                        diff=round(tick_value_diff, 6),
+                        tolerance=round(tick_value_threshold, 6),
+                    )
+                else:
+                    logger.info(
+                        "Exit v2.1 tick_value not explicitly set; using symbol info",
+                        symbol_tick_value=round(tick_value_symbol, 6),
+                    )
+                exit_v21_config.tick_value_usd_per_lot = tick_value_symbol
+            else:
+                if tick_value_diff > tick_value_threshold:
+                    logger.warning(
+                        "Exit v2.1 tick_value differs from symbol info; keeping config value",
+                        config_tick_value=round(tick_value_config, 6),
+                        symbol_tick_value=round(tick_value_symbol, 6),
+                        diff=round(tick_value_diff, 6),
+                        tolerance=round(tick_value_threshold, 6),
+                        suggestion="Update execution.exit_v21.tick_value_usd_per_lot to match broker tick_value",
+                    )
+        else:
+            if tick_value_config > 0:
+                logger.warning(
+                    "Symbol tick_value unavailable; using Exit v2.1 config value",
+                    config_tick_value=round(tick_value_config, 6),
+                )
 
         # ================================================================
         # v4.0: Boot State Machine
@@ -2390,7 +2445,7 @@ def serve_v4() -> None:
                             risk_budget = max(0.0, equity * (risk_pct / 100.0))
 
                             tick_size = float(symbol_info.get("tick_size", 0.0) or 0.0)
-                            tick_value = float(symbol_info.get("tick_value", 0.0) or 0.0)
+                            tick_value = float(exit_v21_config.tick_value_usd_per_lot or 0.0)
                             vol_min_sym = float(symbol_info.get("volume_min", 0.0) or 0.0)
                             vol_max_sym = float(symbol_info.get("volume_max", 0.0) or 0.0)
                             vol_step_sym = float(symbol_info.get("volume_step", 0.0) or 0.0)
