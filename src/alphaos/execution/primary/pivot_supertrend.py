@@ -135,10 +135,10 @@ class PivotSuperTrend:
     # SuperTrend state
     _direction: TrendDirection = field(default=TrendDirection.NONE, init=False)
     _trend: int = field(default=0, init=False)  # 1 = long, -1 = short, 0 = none
-    _tup: float = field(default=0.0, init=False)  # Upper trailing stop (for downtrend)
-    _tdown: float = field(default=0.0, init=False)  # Lower trailing stop (for uptrend)
-    _prev_tup: float = field(default=0.0, init=False)
-    _prev_tdown: float = field(default=0.0, init=False)
+    _tup: float | None = field(default=None, init=False)  # Upper trailing stop (for downtrend)
+    _tdown: float | None = field(default=None, init=False)  # Lower trailing stop (for uptrend)
+    _prev_tup: float | None = field(default=None, init=False)
+    _prev_tdown: float | None = field(default=None, init=False)
     _trend_duration: int = field(default=0, init=False)
     
     def update(self, bar: Bar) -> SuperTrendState:
@@ -315,7 +315,7 @@ class PivotSuperTrend:
         
         # Ratcheting logic (Pine Script style)
         # TUp: 如果前一根 close > 前一个 TUp，则只能上移
-        if self._tup == 0:
+        if self._prev_tup is None:
             self._tup = up
         else:
             if prev_close > self._prev_tup:
@@ -324,7 +324,7 @@ class PivotSuperTrend:
                 self._tup = up
         
         # TDown: 如果前一根 close < 前一个 TDown，则只能下移
-        if self._tdown == 0:
+        if self._prev_tdown is None:
             self._tdown = dn
         else:
             if prev_close < self._prev_tdown:
@@ -336,9 +336,9 @@ class PivotSuperTrend:
         # Trend := close > TDown[1] ? 1: close < TUp[1]? -1: nz(Trend[1], 1)
         prev_trend = self._trend
         
-        if self._prev_tdown > 0 and bar.close > self._prev_tdown:
+        if self._prev_tdown is not None and bar.close > self._prev_tdown:
             self._trend = 1  # Long
-        elif self._prev_tup > 0 and bar.close < self._prev_tup:
+        elif self._prev_tup is not None and bar.close < self._prev_tup:
             self._trend = -1  # Short
         elif self._trend == 0:
             # Initialize: default to long if no prior trend
@@ -386,9 +386,9 @@ class PivotSuperTrend:
         atr = self._get_atr()
         
         # Trailing stop line: TUp in uptrend, TDown in downtrend
-        if self._trend == 1:
+        if self._trend == 1 and self._tup is not None:
             st_line = self._tup
-        elif self._trend == -1:
+        elif self._trend == -1 and self._tdown is not None:
             st_line = self._tdown
         else:
             st_line = self._center if self._center > 0 else 0.0
@@ -448,8 +448,8 @@ class PivotSuperTrend:
         self._center = 0.0
         self._direction = TrendDirection.NONE
         self._trend = 0
-        self._tup = 0.0
-        self._tdown = 0.0
-        self._prev_tup = 0.0
-        self._prev_tdown = 0.0
+        self._tup = None
+        self._tdown = None
+        self._prev_tup = None
+        self._prev_tdown = None
         self._trend_duration = 0
