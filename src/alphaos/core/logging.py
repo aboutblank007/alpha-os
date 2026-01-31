@@ -98,12 +98,24 @@ class _TeeStream:
     def write(self, data: str) -> int:
         total = 0
         for stream in self._streams:
-            total = stream.write(data)
+            try:
+                if stream is None:
+                    continue
+                res = stream.write(data)
+                if res is not None:
+                    total = res
+            except Exception:
+                # Ignore errors (e.g., broken pipe, closed stream) to prevent crash
+                pass
         return total
 
     def flush(self) -> None:
         for stream in self._streams:
-            stream.flush()
+            try:
+                if stream is not None:
+                    stream.flush()
+            except Exception:
+                pass
 
 
 def enable_log_file(

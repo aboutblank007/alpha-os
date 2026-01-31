@@ -1318,6 +1318,7 @@ def serve_v4() -> None:
         import zmq
         import zmq.asyncio
         import struct
+        from alphaos.monitoring.metrics import MetricsCollector, setup_metrics_server
         
         from alphaos.core.types import Tick, Order, OrderAction, Signal, SignalType, MarketPhase
         from alphaos.execution.zmq_client import ZeroMQClient
@@ -1403,6 +1404,17 @@ def serve_v4() -> None:
             latency_threshold_ms=guardian_latency_threshold,
             lock_file_path=guardian_data["lock_file_path"],
         )
+
+        # ================================================================
+        # Metrics server (Prometheus) + collector
+        # ================================================================
+        metrics = None
+        try:
+            metrics_port = int(metrics_data.get("port", 9090))
+            setup_metrics_server(port=metrics_port, metrics_config=metrics_data)
+            metrics = MetricsCollector(symbol=args.symbol, version="4.0.0", metrics_config=metrics_data)
+        except Exception as e:
+            logger.warning("Metrics server init failed", error=str(e))
         
         # ================================================================
         # v4.0: Risk Manager (single authority for circuit breakers)
@@ -1751,6 +1763,8 @@ def serve_v4() -> None:
                     try:
                         message = await tick_socket_replay.recv()
                         replay_tick_count += 1
+                        if metrics is not None:
+                            metrics.record_tick()
                         consecutive_timeouts = 0  # Reset on successful receive
                         last_tick_received_time = time.time()  # Track last tick time
                         
@@ -2057,6 +2071,8 @@ def serve_v4() -> None:
                     # Receive tick
                     message = await tick_socket.recv()
                     tick_count += 1
+                    if metrics is not None:
+                        metrics.record_tick()
                     
                     # Parse binary tick (36 bytes)
                     if len(message) != 36:
@@ -2759,6 +2775,13 @@ def serve_v4() -> None:
                             temperature=float(result.market_temperature) if 'result' in locals() and result else 0.0,
                             entropy=float(result.market_entropy) if 'result' in locals() and result else 0.0
                         )
+
+                        if metrics is not None:
+                            try:
+                                metrics.update_warmup(warmup_prog)
+                                metrics.update_thermodynamics(snapshot.temperature, snapshot.entropy)
+                            except Exception:
+                                pass
                         
                         if snapshot_task is not None:
                             try:

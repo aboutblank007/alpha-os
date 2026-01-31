@@ -106,10 +106,16 @@ export function alphaOSReducer(state: AlphaOSState, action: Action): AlphaOSStat
                 let nextPositions = [];
                 if (Array.isArray(payload)) {
                     nextPositions = payload;
-                } else if (payload?.positions && Array.isArray(payload.positions)) {
-                    nextPositions = payload.positions;
-                } else if (payload?.direction) {
-                    nextPositions = [payload];
+                } else if (payload && typeof payload === 'object' && 'positions' in payload) {
+                    const positions = (payload as { positions?: unknown }).positions;
+                    if (Array.isArray(positions)) {
+                        nextPositions = positions;
+                    }
+                } else if (payload && typeof payload === 'object' && 'direction' in payload) {
+                    const direction = (payload as { direction?: unknown }).direction;
+                    if (direction) {
+                        nextPositions = [payload];
+                    }
                 }
                 return {
                     ...state,

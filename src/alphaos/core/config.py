@@ -792,12 +792,18 @@ class ApiConfig(BaseModel):
         default_factory=lambda: [
             "http://localhost:5173",
             "http://127.0.0.1:5173",
+            # Integrated web server default (uvicorn/fastapi static hosting)
+            "http://localhost:8000",
+            "http://127.0.0.1:8000",
         ]
     )
     ws_allowed_origins: list[str] = Field(
         default_factory=lambda: [
             "http://localhost:5173",
             "http://127.0.0.1:5173",
+            # Integrated web server default (WS Origin will be the web host/port)
+            "http://localhost:8000",
+            "http://127.0.0.1:8000",
         ]
     )
     ws_auth_tokens: list[str] = Field(default_factory=list)

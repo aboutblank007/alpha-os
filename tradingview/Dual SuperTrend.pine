@@ -1,0 +1,229 @@
+//@version=5
+// ══════════════════════════════════════════════════════════════════════════════════════════════════ //
+//# * ══════════════════════════════════════════════════════════════════════════════════════════════
+//# *
+//# * Study       : Dual SuperTrend, Ichimoku and DMI Color Weighted
+//# *               ADX Colored Directional Movement Index Line
+//# *               Ichimoku Cloud
+//# *               Statistical Panel
+//# * Author      : © dgtrd
+//# *
+//# * Revision History
+//# *  Release    : Jun 11, 2020 : Initial Release
+//# *  Update     : Jun 24, 2020 : Second SuperTrend Addition, to Spot Breakouts and Consolidation Levels Easily
+//# *  Update     : Jul 07, 2020 : TK and DI Corsses
+//# *  Update     : Aug 18, 2020 : Statistical Panel Addition
+//# *  Update     : May 23, 2022 : New options : Highlight SuperTrend Breakouts, and SuperTrend Trending Cloud 
+//# *  Update     : May 30, 2022 : Statistical Panel now includes Momentum Indicators (RSI, Stoch and MACD) 
+//# *
+//# * ══════════════════════════════════════════════════════════════════════════════════════════════
+// ══════════════════════════════════════════════════════════════════════════════════════════════════ //
+
+indicator('Dual SuperTrend, Ichimoku and DMI Color Weighted by DGT', 'ST(ICHI, DMI) ʙʏ DGT ☼☾', true)
+
+// -Inputs ====================================================================================== //
+
+showSTIchi  = input(true, '► Ichimoku Cloud Colored SuperTrend')
+showSTDMI   = input(true, '► Directional Movement Colored SuperTrend')
+showDMI     = input(true, '► ADX Colored Directional Movement Line')
+showKumu    = input(true, '► Ichimoku Kumu Cloud')
+showVBCB    = input(true, '► Volume Weighted Colored Bars')
+showBreak   = input(true, 'Highlight SuperTrend Breakouts')
+showTrend   = input(true, 'Highlight SuperTrend Trending Cloud')
+showCrosses = input(true, 'Highlight TK and DI Crosses')
+hideLabel   = input(false,'Hide Statistical Panel | Historical Readings', inline = 'STAT')
+histLabel   = input.int(0,'', minval=0, inline = 'STAT')
+v_show_last = input.int(377, 'Plotting Length', minval = 10, step = 10)
+
+group_st     = 'SuperTrend Calculation Metrics'
+stMultIchi   = input.int(1 , '  SuperTrend Ichimoku : Multiplier Factor'    , minval=1, group = group_st)
+stLengthIchi = input.int(14, '  SuperTrend Ichimoku : Length of ATR Periods', minval=1, group = group_st)
+stMultDMI    = input.int(2 , '  SuperTrend DMI : Multiplier Factor'         , minval=1, group = group_st)
+stLengthDMI  = input.int(14, '  SuperTrend DMI : Length of ATR Periods'     , minval=1, group = group_st)
+
+group_color  = 'Color Calculation Metrics'
+adxSmoothing = input.int(14, '  Directional Movement : ADX Smoothing'        , minval=1, group = group_color)
+diLength     = input.int(14, '  Directional Movement : DI Length'            , minval=1, group = group_color)
+strongTrend  = input(25    , '  Directional Movement : Strong Trend Theshold'          , group = group_color)
+weakTrend    = input(17    , '  Directional Movement : Weak Trend Theshold'            , group = group_color)
+
+conversionPeriods   = input.int(9 , '  Ichimoku Cloud : Conversion Line Periods', minval=1, group = group_color)
+basePeriods         = input.int(26, '  Ichimoku Cloud : Base Line Periods'      , minval=1, group = group_color)
+laggingSpan2Periods = input.int(52, '  Ichimoku Cloud : Lagging Span 2 Periods' , minval=1, group = group_color)
+displacement        = input.int(26, '  Ichimoku Cloud : Displacement'           , minval=1, group = group_color)
+
+vwcbLen      = input.int(21     , '  Volume Weighted Colored Bars : Length'        , minval=1           , group = group_color)
+vwcbUpper    = input.float(1.618, '  Volume Weighted Colored Bars : Upper Theshold', minval=0.1, step=.1, group = group_color)
+vwcbLower    = input.float(.618 , '  Volume Weighted Colored Bars : Lower Theshold', minval=0.1, step=.1, group = group_color)
+
+group_panel   = 'Statistical Panel : Momentum Indicators'
+rsiSrc        = input.source(close, '  RSI : Source', group=group_panel)
+rsiLength     = input.int(14, '  RSI : Length', minval=1, group=group_panel)
+rsiOversold   = input.int(30, '  RSI : OverSold Theshold', minval=1, group=group_panel)
+rsiOverbought = input.int(70, '  RSI : OverBought Theshold', minval=1, group=group_panel)
+
+stochLengthK    = input.int(14, '  Stoch : %K', minval=1, group=group_panel)
+stochLengthD    = input.int(3, '  Stoch : %D', minval=1, group=group_panel)
+stochSmoothingK = input.int(3, '  Stoch : Smoothing', minval=1, group=group_panel)
+stochOversold   = input.int(20, '  Stoch : OverSold Theshold', minval=1, group=group_panel)
+stochOverbought = input.int(80, '  Stoch : OverBought Theshold', minval=1, group=group_panel)
+
+macdSrc          = input.source(close, '  MACD : Source', group=group_panel)
+macdFastLength   = input.int(12, '  MACD : Fast Length', minval=1, group=group_panel)
+macdSlowLength   = input.int(26, '  MACD : Slow Length', minval=1, group=group_panel)
+macdSignalLength = input.int(9, '  MACD : Signal Smoothing Length', minval=1, group=group_panel)
+
+
+//source = input(title="Source", defval=close)
+source = close
+
+// -Calculations ================================================================================ //
+
+// SuperTrends
+[superTrendIchi, dirIchi] = ta.supertrend(stMultIchi, stLengthIchi)
+[superTrendDMI , dirDMI]  = ta.supertrend(stMultDMI , stLengthDMI )
+
+// Directional Movement Index 
+[diplus, diminus, adxValue] = ta.dmi(diLength, adxSmoothing)
+
+dmiBull = diplus   >= diminus and adxValue >= strongTrend
+dmiBear = diplus   <  diminus and adxValue >= strongTrend
+dmiWeak = adxValue < strongTrend and adxValue > weakTrend
+
+// Ichimoku Cloud 
+donchian(len)  => math.avg(ta.lowest(len), ta.highest(len))
+
+conversionLine = donchian(conversionPeriods)
+baseLine       = donchian(basePeriods)
+leadLine1      = math.avg(conversionLine, baseLine)
+leadLine2      = donchian(laggingSpan2Periods)
+
+aboveCloud     = source > leadLine1[displacement - 1] and source > leadLine2[displacement - 1]
+belowCloud     = source < leadLine1[displacement - 1] and source < leadLine2[displacement - 1]
+inCloud        = source > leadLine1[displacement - 1] and source < leadLine2[displacement - 1] or source < leadLine1[displacement - 1] and source > leadLine2[displacement - 1]
+
+// Volume Weighted Colored Bars
+nzVolune = nz(volume)
+avrg     = ta.sma(nzVolune, vwcbLen)
+
+// Label
+lbStat  = histLabel > 0 ? 'Historical Status of ' + syminfo.description + '\n   -exchange: ' + syminfo.prefix + '\n   -timeframe: ' + timeframe.period + '\n   -history: ' + str.tostring(histLabel) + ' bar(s) earlier' : 
+                          'Current Status of '    + syminfo.description + '\n   -exchange: ' + syminfo.prefix + '\n   -timeframe: ' + timeframe.period
+
+stText  = source > superTrendIchi and source > superTrendDMI ? ' 🟢  both bullish' : 
+          source < superTrendIchi and source < superTrendDMI ? ' 🔴  both bearish' : 
+          source < superTrendIchi and source > superTrendDMI or source > superTrendIchi and source < superTrendDMI ? ' ⚫ trendless or transitioning' : na
+
+adxMom  = adxValue > adxValue[1] ? ' and growing' : ' and falling'
+diStat  = diplus >= diminus ? '\n   -diplus(' + str.tostring(diplus, '#.##') + ') >= diminus(' + str.tostring(diminus, '#.##') + ')' : 
+                              '\n   -diplus(' + str.tostring(diplus, '#.##') + ') < diminus(' + str.tostring(diminus, '#.##') + ')'
+
+dmiText = dmiBull ? '🟢  bullish\n   -adx(' + str.tostring(adxValue, '#.##') + ')' + adxMom + diStat : 
+          dmiBear ? '🔴  bearish\n   -adx(' + str.tostring(adxValue, '#.##') + ')' + adxMom + diStat : 
+          '⚫ trendless\n   -adx('  + str.tostring(adxValue, '#.##') + ')' + adxMom + diStat
+
+tkStat  = conversionLine >= baseLine ? '\n   -tenkan-sen(' + str.tostring(conversionLine, format.mintick) + ') >= kijun-sen(' + str.tostring(baseLine, format.mintick) + ')' : 
+                                       '\n   -tenkan-sen(' + str.tostring(conversionLine, format.mintick) + ') < kijun-sen(' + str.tostring(baseLine, format.mintick) + ')'
+
+kumoStt = leadLine1 > leadLine2 ? '\n   -green kumo cloud ahead' : '\n   -red kumo cloud ahead'
+ichiTxt = aboveCloud ? '🟢  bullish\n   -price action above the kumo cloud' + tkStat + kumoStt : 
+          belowCloud ? '🔴  bearish\n   -price action below the kumo cloud' + tkStat + kumoStt : 
+          inCloud ? '⚫  trendless or transitioning\n   -price action within the kumo cloud' + tkStat + kumoStt : na
+
+volText = nzVolune >  avrg * vwcbUpper ? str.tostring(nzVolune, format.volume) + ' 🟢  high above average (' + str.tostring(avrg, format.volume) + ')' : 
+          nzVolune >= avrg * vwcbLower and volume <= avrg * vwcbUpper ? str.tostring(volume, format.volume) + ' ⚫  average volume(' + str.tostring(avrg, format.volume) + ')' : 
+          str.tostring(volume, format.volume) + ' 🔴  low below average(' + str.tostring(avrg, format.volume) + ')'
+
+// -Coloring ==================================================================================== //
+
+ichiColor =  aboveCloud ? conversionLine >= baseLine ? #006400 : color.green : 
+             belowCloud ? conversionLine >= baseLine ? #910000 : color.red : 
+             inCloud ? conversionLine >= baseLine ? color.black : color.gray : conversionLine >= baseLine ? color.blue : color.aqua
+
+dmiColor  =  dmiBull ? adxValue > adxValue[1] ? #006400 : color.green : 
+             dmiBear ? adxValue > adxValue[1] ? #910000 : color.red : 
+             dmiWeak ? adxValue > adxValue[1] ? color.black : color.gray : adxValue > adxValue[1]     ? #FFC40C    : color.yellow
+
+stColorIchi = dirIchi == dirIchi[1] ? ichiColor : na
+stColorDMI  = dirDMI  == dirDMI[1]  ? dmiColor  : na
+
+bullCandle = close > open
+vbcbColor  = nzVolune > avrg * vwcbUpper ? bullCandle ? #006400 : #910000 : nzVolune < avrg * vwcbLower ? bullCandle ? #7FFFD4 : #FF9800 : bullCandle ? color.green : color.red
+
+// -Plotting ==================================================================================== //
+
+// SuperTrends
+bear = source < superTrendIchi and source < superTrendDMI
+plotshape(showBreak and bear and bear!=bear[1], 'Bear SuperTrend Bearkout', shape.triangledown, location.abovebar, color.orange, show_last=v_show_last, size=size.small)
+bull = source > superTrendIchi and source > superTrendDMI
+plotshape(showBreak and bull and bull!=bull[1], 'Bull SuperTrend Bearkout', shape.triangleup  , location.belowbar, color.aqua  , show_last=v_show_last, size=size.small)
+
+st1 = plot(superTrendIchi > 0                           ? superTrendIchi : na, 'Ichimoku Colored SuperTrend', showSTIchi ? stColorIchi : na, 2                    , show_last=v_show_last)
+plot(showCrosses and ta.cross(conversionLine, baseLine) ? superTrendIchi : na, 'TK Crosses'                 , stColorIchi                  , 4, plot.style_circles, show_last=v_show_last, editable = false)
+st2 = plot(superTrendDMI  > 0                           ? superTrendDMI  : na, 'DMI Colored SuperTrend'     , showSTDMI  ? stColorDMI  : na, 2                    , show_last=v_show_last)
+plot(showCrosses and ta.cross(diplus, diminus)          ? superTrendDMI  : na, 'DI Crosses'                 , stColorDMI                   , 4, plot.style_circles, show_last=v_show_last, editable = false)
+fill(st1, st2, showTrend ? bull ? color.new(color.aqua, 75) : bear ? color.new(color.orange, 75) : na : na, 'SuperTrend Trending Cloud', show_last = v_show_last)
+
+// ADX Colored Directional Movement Line
+plotshape(showDMI and diplus >= diminus, '+DI > -DI ? ADX Colored DMI', shape.triangleup  , location.top, dmiColor, show_last=v_show_last, editable = false)
+plotshape(showDMI and diplus <  diminus, '+DI < -DI ? ADX Colored DMI', shape.triangledown, location.top, dmiColor, show_last=v_show_last, editable = false)
+
+// Ichimoku Cloud
+plot(conversionLine, 'Conversion Line', #2962FF, display=display.none)
+plot(baseLine      , 'Base Line'      , #B71C1C, display=display.none)
+plot(close         , 'Lagging Span'   , #43A047, display=display.none, offset = -displacement + 1)
+p1 = plot(leadLine1, 'Leading Span A', color.green, offset = displacement - 1, display=display.none, show_last = displacement - 1, editable = false)
+p2 = plot(leadLine2, 'Leading Span B', color.red  , offset = displacement - 1, display=display.none, show_last = displacement - 1, editable = false)
+fill(p1, p2, leadLine1 > leadLine2 ? color.new(color.green, 90) : color.new(color.red, 90), 'Kumo Cloud', show_last = showKumu ? v_show_last : 1)
+
+// Volume Weighted Colored Bars by KIVANÇ ÖZBİLGİÇ
+barcolor(showVBCB and nzVolune ? vbcbColor : na, title='Volume Weighted Colored Bars by [KıvançÖZBİLGİÇ]', show_last=v_show_last)
+
+// Trend Statistical Panel
+if not hideLabel
+
+    // RSI
+    rsiValue = ta.rsi(rsiSrc, rsiLength)
+    rsiText = rsiValue >= 50 ? rsiValue > rsiOverbought ? '🟢  bullish (overbought)' : rsiValue > 60 ? '🟢  bullish (rsi > 60)' : '⚫ bullish (50 < rsi < 60)' : rsiValue < rsiOversold ? '🔴  bearish (oversold)' : rsiValue < 40 ? '🔴  bearish (rsi < 40)' : '⚫  bearish (40 < rsi < 50)'
+    rsiText := ta.change(rsiValue) > 0 ? rsiText + '\n   -rsi(' + str.tostring(rsiValue, '#.##') + ') and rising' : rsiText + '\n   -rsi(' + str.tostring(rsiValue, '#.##') + ') and falling'
+
+    // Stochastic
+    stochK = ta.sma(ta.stoch(close, high, low, stochLengthK), stochSmoothingK)
+    stochD = ta.sma(stochK, stochLengthD)
+    stochMom = ta.change(stochK) > 0 ? ', stochK rising' : ', stochK falling'
+    stochStat = stochK > stochOverbought ? ' (overbought)' : stochK < stochOversold ? ' (oversold)' : ''
+    stochText = stochK > stochD ? '🟢  bullish' + stochStat + '\n   -%k(' + str.tostring(stochK, '#.##') + ') > %d(' + str.tostring(stochD, '#.##') + ')' + stochMom : '🔴  bearish' + stochStat + '\n   -%k(' + str.tostring(stochK, '#.##') + ') < %d(' + str.tostring(stochD, '#.##') + ')' + stochMom
+
+    // MACD
+    [macdLine, signalLine, histLine] = ta.macd(macdSrc, macdFastLength, macdSlowLength, macdSignalLength)
+    macdMom = ta.change(histLine) > 0 ? ', momentum rising' : ', momentum falling'
+    macdText = macdLine > signalLine ? '🟢  bullish (macd > signal)' + macdMom : '🔴  bearish (macd < signal)' + macdMom
+
+
+    label indiLabel = label.new(time, source[1], text=lbStat[histLabel] + 
+         '\n\nSuperTrends:' + stText[histLabel] + 
+         '\n\nDirectional Movement: ' + dmiText[histLabel] + 
+         '\n\nIchimoku Cloud: ' + ichiTxt[histLabel] + 
+         '\n\nRSI : ' + rsiText[histLabel] + 
+         '\n\nStochastic : ' + stochText[histLabel] + 
+         '\n\nMACD : ' + macdText[histLabel] +
+         '\n\nVolume: ' + volText[histLabel], 
+         tooltip='                 ◁ how to read colored dmi line ▷\n* triangle shapes:\n  ▲- bullish : diplus >= diminus\n  ▼- bearish : diplus < diminus\n* colors:\n  green - bullish trend : adx >= strongTrend and di+ > di-\n  red - bearish trend : adx >= strongTrend and di+ < di- \n  gray - no trend : weakTrend < adx < strongTrend\n  yellow - weak trend : adx < weakTrend\n* color density:\n  darker : adx growing\n  lighter : adx falling ', color=#4262ba, xloc=xloc.bar_time, style=label.style_label_left, textcolor=color.white, textalign=text.align_left)
+    label.set_x(indiLabel, label.get_x(indiLabel) + math.round(ta.change(time) * 5))
+    label.delete(indiLabel[1])
+
+    label indiLabel2 = label.new(histLabel > 0 ? time[histLabel] : na, low[histLabel] * 0.89, color=#4262ba, xloc=xloc.bar_time, style=label.style_triangleup, size=size.tiny)
+    label.delete(indiLabel2[1])
+
+// -Alerts   ==================================================================================== //
+
+alertcondition(ta.cross(conversionLine, baseLine), 'Ichimoku Cloud TK Cross'               , 'TK Cross - Probable Trade Opportunity\n{{exchange}}:{{ticker}}->\nPrice = {{close}},\nTime = {{time}}')
+alertcondition(ta.cross(diplus, diminus)         , 'Directional Movement DI Cross'         , 'DI Cross - Probable Trade Opportunity\n{{exchange}}:{{ticker}}->\nPrice = {{close}},\nTime = {{time}}')
+alertcondition(dirIchi != dirIchi[1]             , 'SuperTrend Direction Change - Ichimoku', 'ST(ICH) Direction Change - Probable Trade Opportunity\n{{exchange}}:{{ticker}}->\nPrice = {{close}},\nTime = {{time}}')
+alertcondition(dirDMI  != dirDMI[1]              , 'SuperTrend Direction Change - DMI'     , 'ST(DMI) Direction Change - Probable Trade Opportunity\n{{exchange}}:{{ticker}}->\nPrice = {{close}},\nTime = {{time}}')
+alertcondition(bull and bull!=bull[1]            , 'Bull SuperTrend Bearkout'              , 'ST(ICHI, DMI) Bull SuperTrend Bearkout - Probable Trade Opportunity\n{{exchange}}:{{ticker}}->\nPrice = {{close}},\nTime = {{time}}')
+alertcondition(bear and bear!=bear[1]            , 'Bear SuperTrend Bearkout'              , 'ST(ICHI, DMI) Bear SuperTrend Bearkout - Probable Trade Opportunity\n{{exchange}}:{{ticker}}->\nPrice = {{close}},\nTime = {{time}}')
+
+
+var table logo = table.new(position.bottom_right, 1, 1)
+table.cell(logo, 0, 0, '☼☾  ', text_size=size.normal, text_color=color.teal)

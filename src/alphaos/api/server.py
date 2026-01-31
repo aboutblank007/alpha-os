@@ -11,6 +11,7 @@ from fastapi.staticfiles import StaticFiles
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, create_async_engine
 from starlette.responses import Response
+from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from alphaos.core.config import AlphaOSConfig
 
@@ -30,14 +31,23 @@ class SPAStaticFiles(StaticFiles):
         self._index_path = Path(directory) / index
 
     async def get_response(self, path: str, scope) -> Response:  # type: ignore[override]
-        response = await super().get_response(path, scope)
-        if response.status_code != 404:
+        # Starlette StaticFiles may raise HTTPException(404) instead of returning a 404 response.
+        try:
+            response = await super().get_response(path, scope)
+        except StarletteHTTPException as exc:
+            if exc.status_code != 404:
+                raise
+            response = None
+
+        if response is not None and response.status_code != 404:
             return response
 
         # Do not swallow API routes
         req_path = scope.get("path", "")
         if req_path.startswith("/api"):
-            return response
+            if response is not None:
+                return response
+            raise StarletteHTTPException(status_code=404, detail="Not Found")
 
         if self._index_path.exists():
             return await super().get_response(self._index_path.name, scope)
@@ -66,6 +76,26 @@ def create_app(config: AlphaOSConfig, ui_dist_path: str | Path | None = None) ->
             config.database.connection_string,
             echo=False,
         )
+
+        # Detect schema (time vs timestamp)
+        async with AsyncSession(app.state.db_engine) as session:
+            try:
+                # Check for 'time' column
+                await session.execute(text("SELECT time FROM runtime_state LIMIT 0"))
+                app.state.runtime_time_column = "time"
+                logger.info("Detected 'time' column in runtime_state")
+            except Exception:
+                await session.rollback()
+                try:
+                    # Check for 'timestamp' column
+                    await session.execute(text("SELECT timestamp FROM runtime_state LIMIT 0"))
+                    app.state.runtime_time_column = "timestamp"
+                    logger.info("Detected 'timestamp' column in runtime_state")
+                except Exception:
+                    await session.rollback()
+                    app.state.runtime_time_column = "timestamp"  # Default
+                    logger.warning("Could not detect time/timestamp column in runtime_state, defaulting to 'timestamp'")
+
         try:
             yield
         finally:
@@ -100,17 +130,38 @@ def create_app(config: AlphaOSConfig, ui_dist_path: str | Path | None = None) ->
         if engine is None:
             raise HTTPException(status_code=500, detail="DB engine not initialized")
 
+        time_col = getattr(app.state, "runtime_time_column", "timestamp")
+
         async with AsyncSession(engine) as session:
             try:
                 query = text(
-                    """
+                    f"""
                     SELECT * FROM runtime_state
-                    ORDER BY time DESC
+                    ORDER BY {time_col} DESC
                     LIMIT :limit OFFSET :offset
                     """
                 )
                 result = await session.execute(query, {"limit": limit, "offset": offset})
                 rows = result.mappings().all()
+                payload: list[dict[str, Any]] = []
+                for row in rows:
+                    data = dict(row)
+                    ts_value = data.get("timestamp") or data.get("time")
+                    if ts_value is not None:
+                        if isinstance(ts_value, (int, float)):
+                            data["timestamp"] = ts_value
+                        else:
+                            try:
+                                data["timestamp"] = ts_value.timestamp()
+                            except Exception:
+                                data["timestamp"] = ts_value
+                    payload.append(data)
+                return payload
+            except Exception as e:
+                logger.error("Error fetching runtime history: %s", e)
+                if "does not exist" in str(e):
+                    return []
+                raise HTTPException(status_code=500, detail=str(e))
                 payload: list[dict[str, Any]] = []
                 for row in rows:
                     data = dict(row)

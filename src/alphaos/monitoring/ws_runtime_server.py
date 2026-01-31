@@ -6,8 +6,10 @@ from urllib.parse import parse_qs, urlparse
 
 import websockets
 from alphaos.monitoring.runtime_state import RuntimeSnapshot
+from alphaos.core.logging import get_logger
 
-logger = logging.getLogger(__name__)
+# Use structlog-style logger (supports key=value context)
+logger = get_logger(__name__)
 
 class WSRuntimeServer:
     """
@@ -34,7 +36,7 @@ class WSRuntimeServer:
         
     async def start(self):
         self.server = await websockets.serve(self._handler, self.host, self.port)
-        logger.info(f"WSRuntimeServer started on ws://{self.host}:{self.port}")
+        logger.info("WSRuntimeServer started", ws=f"ws://{self.host}:{self.port}")
         
     async def stop(self):
         if self.server:
@@ -75,17 +77,45 @@ class WSRuntimeServer:
             return True
         return origin in self.allowed_origins
 
-    def _extract_token(self, websocket: websockets.WebSocketServerProtocol) -> str | None:
-        parsed = urlparse(websocket.path or "")
+    def _get_path(self, conn: Any) -> str:
+        """
+        websockets compatibility:
+        - websockets<=11: conn.path + conn.request_headers
+        - websockets>=12 (e.g. 16.0): conn.request.path + conn.request.headers
+        """
+        path = getattr(conn, "path", None)
+        if isinstance(path, str):
+            return path
+        req = getattr(conn, "request", None)
+        if req is not None:
+            req_path = getattr(req, "path", None)
+            if isinstance(req_path, str):
+                return req_path
+        return ""
+
+    def _get_headers(self, conn: Any) -> Any:
+        headers = getattr(conn, "request_headers", None)
+        if headers is not None:
+            return headers
+        req = getattr(conn, "request", None)
+        if req is not None:
+            req_headers = getattr(req, "headers", None)
+            if req_headers is not None:
+                return req_headers
+        return {}
+
+    def _extract_token(self, conn: Any) -> str | None:
+        parsed = urlparse(self._get_path(conn) or "")
         params = parse_qs(parsed.query)
         token = params.get("token", [None])[0]
         if token:
             return token
-        auth_header = websocket.request_headers.get("Authorization", "")
+        headers = self._get_headers(conn)
+        auth_header = headers.get("Authorization", "") if hasattr(headers, "get") else ""
         if auth_header.lower().startswith("bearer "):
             candidate = auth_header[7:].strip()
             return candidate or None
-        header_token = websocket.request_headers.get("X-AlphaOS-Token")
+        header_token = headers.get("X-AlphaOS-Token") if hasattr(headers, "get") else None
         return header_token
 
     def _is_token_valid(self, token: str | None) -> bool:
@@ -93,15 +123,16 @@ class WSRuntimeServer:
             return True
         return token in self.auth_tokens
 
-    async def _handler(self, websocket: websockets.WebSocketServerProtocol):
-        origin = websocket.request_headers.get("Origin")
+    async def _handler(self, websocket: Any):
+        headers = self._get_headers(websocket)
+        origin = headers.get("Origin") if hasattr(headers, "get") else None
         token = self._extract_token(websocket)
         if not self._is_origin_allowed(origin) or not self._is_token_valid(token):
             logger.warning(
                 "Rejected WS client",
                 origin=origin,
                 has_token=bool(token),
-                path=websocket.path,
+                path=self._get_path(websocket),
             )
             await websocket.close(code=1008, reason="Forbidden")
             return
@@ -122,7 +153,11 @@ class WSRuntimeServer:
                 }))
             
             # Keep connection open
-            await websocket.wait_closed()
+            wait_closed = getattr(websocket, "wait_closed", None)
+            if callable(wait_closed):
+                await wait_closed()
+            else:
+                await asyncio.Future()
         finally:
             self.clients.discard(websocket)
 

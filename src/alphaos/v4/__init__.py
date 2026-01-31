@@ -70,14 +70,23 @@ from alphaos.v4.primary import (
     PrimarySignalV4,
 )
 
-# Training
-from alphaos.v4.training import (
-    TrainingConfig,
-    V4TrainingPipeline,
-    CPCVSplitter,
-    PurgedKFold,
-    EmbargoConfig,
-)
+# Training (optional import)
+# NOTE: Keep v4 package import lightweight so `python -m alphaos.v4.cli serve`
+# doesn't fail when training-only dependencies are missing.
+try:
+    from alphaos.v4.training import (  # type: ignore
+        TrainingConfig,
+        V4TrainingPipeline,
+        CPCVSplitter,
+        PurgedKFold,
+        EmbargoConfig,
+    )
+except Exception:  # pragma: no cover
+    TrainingConfig = None  # type: ignore[assignment]
+    V4TrainingPipeline = None  # type: ignore[assignment]
+    CPCVSplitter = None  # type: ignore[assignment]
+    PurgedKFold = None  # type: ignore[assignment]
+    EmbargoConfig = None  # type: ignore[assignment]
 
 # Inference
 from alphaos.v4.inference import (
@@ -129,7 +138,7 @@ __all__ = [
     "PrimaryEngineConfig",
     "PrimaryEngineV4",
     "PrimarySignalV4",
-    # Training
+    # Training (optional)
     "TrainingConfig",
     "V4TrainingPipeline",
     "CPCVSplitter",

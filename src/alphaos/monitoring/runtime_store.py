@@ -37,6 +37,31 @@ class RuntimeStore:
                     db_snapshot_count BIGINT
                 );
             """))
+
+            # Backward-compat migration: older schema may have `timestamp` column instead of `time`.
+            try:
+                cols = await conn.execute(
+                    text(
+                        """
+                        SELECT column_name, data_type
+                        FROM information_schema.columns
+                        WHERE table_schema = 'public' AND table_name = 'runtime_state'
+                        """
+                    )
+                )
+                col_map = {row[0]: row[1] for row in cols.fetchall()}
+                if "time" not in col_map:
+                    await conn.execute(text("ALTER TABLE runtime_state ADD COLUMN IF NOT EXISTS time TIMESTAMPTZ;"))
+                    if "timestamp" in col_map:
+                        dt = (col_map.get("timestamp") or "").lower()
+                        if "timestamp" in dt:
+                            await conn.execute(text("UPDATE runtime_state SET time = timestamp WHERE time IS NULL;"))
+                        else:
+                            await conn.execute(
+                                text("UPDATE runtime_state SET time = to_timestamp(timestamp) WHERE time IS NULL;")
+                            )
+            except Exception as e:
+                logger.debug(f"RuntimeStore schema inspection/migration skipped: {e}")
             
             # Convert to hypertable (ignore if already exists)
             try:
@@ -56,32 +81,56 @@ class RuntimeStore:
         # Async write (fire and forget pattern optional, here we await for safety)
         try:
             async with self.engine.begin() as conn:
-                await conn.execute(
-                    text("""
-                        INSERT INTO runtime_state (
-                            time, symbol, warmup_progress, ticks_total, 
-                            open_positions, guardian_halt, exit_v21_enabled,
-                            market_phase, temperature, entropy, db_snapshot_count
-                        ) VALUES (
-                            to_timestamp(:ts), :symbol, :warmup, :ticks, 
-                            :pos, :halt, :exit_v21,
-                            :phase, :temp, :entropy, :count
-                        )
-                    """),
-                    {
-                        "ts": snapshot.timestamp,
-                        "symbol": snapshot.symbol,
-                        "warmup": snapshot.warmup_progress,
-                        "ticks": snapshot.ticks_total,
-                        "pos": snapshot.open_positions,
-                        "halt": snapshot.guardian_halt,
-                        "exit_v21": snapshot.exit_v21_enabled,
-                        "phase": snapshot.market_phase,
-                        "temp": snapshot.temperature,
-                        "entropy": snapshot.entropy,
-                        "count": snapshot.db_snapshot_count
-                    }
-                )
+                params = {
+                    "ts": snapshot.timestamp,
+                    "symbol": snapshot.symbol,
+                    "warmup": snapshot.warmup_progress,
+                    "ticks": snapshot.ticks_total,
+                    "pos": snapshot.open_positions,
+                    "halt": snapshot.guardian_halt,
+                    "exit_v21": snapshot.exit_v21_enabled,
+                    "phase": snapshot.market_phase,
+                    "temp": snapshot.temperature,
+                    "entropy": snapshot.entropy,
+                    "count": snapshot.db_snapshot_count,
+                }
+
+                # Preferred schema: `time` column (TIMESTAMPTZ)
+                try:
+                    await conn.execute(
+                        text(
+                            """
+                            INSERT INTO runtime_state (
+                                time, symbol, warmup_progress, ticks_total,
+                                open_positions, guardian_halt, exit_v21_enabled,
+                                market_phase, temperature, entropy, db_snapshot_count
+                            ) VALUES (
+                                to_timestamp(:ts), :symbol, :warmup, :ticks,
+                                :pos, :halt, :exit_v21,
+                                :phase, :temp, :entropy, :count
+                            )
+                            """
+                        ),
+                        params,
+                    )
+                except Exception:
+                    # Backward compat: try `timestamp` column (float seconds) if `time` doesn't exist
+                    await conn.execute(
+                        text(
+                            """
+                            INSERT INTO runtime_state (
+                                timestamp, symbol, warmup_progress, ticks_total,
+                                open_positions, guardian_halt, exit_v21_enabled,
+                                market_phase, temperature, entropy, db_snapshot_count
+                            ) VALUES (
+                                :ts, :symbol, :warmup, :ticks,
+                                :pos, :halt, :exit_v21,
+                                :phase, :temp, :entropy, :count
+                            )
+                            """
+                        ),
+                        params,
+                    )
         except Exception as e:
             logger.error(f"Failed to write runtime snapshot: {e}")
 
