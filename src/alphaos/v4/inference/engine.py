@@ -236,7 +236,7 @@ class InferenceConfig:
     # - "primary": 使用 PrimaryEngine 当前方向 (trend_direction)
     trend_alignment_source: str = "st_15m"
     
-    # v4.0: FVG 事件窗口（rising-edge 后允许持续 N 根 bar）
+    # v4.0: FVG 事件窗口（包含当前 bar，共 N 根 bar）
     fvg_event_window_bars: int = 5
     
     # v4.1: FVG 衰减窗口（fvg_event 过后仍可短暂放行）
@@ -1183,7 +1183,7 @@ class InferenceEngineV4:
             fvg_direction = 1 if fvg_event > 0 else (-1 if fvg_event < 0 else 0)
             fvg_event_val = fvg_event
             
-            # 事件窗口：rising-edge 后允许持续 N 根 bar 进入推理
+            # 事件窗口：包含当前 bar，共 N 根 bar 进入推理
             window_bars = max(1, int(self.config.fvg_event_window_bars))
             if is_rising_edge:
                 self._fvg_window_remaining = window_bars
@@ -1228,10 +1228,11 @@ class InferenceEngineV4:
                         event_direction_source = "decay"
             
             if event_present:
+                in_event_window = True
+            event_window_remaining = self._fvg_window_remaining if event_present else 0
+            if event_present and self._fvg_window_remaining > 0:
                 # 当前 bar 计入窗口消耗
                 self._fvg_window_remaining = max(0, self._fvg_window_remaining - 1)
-                in_event_window = True
-            event_window_remaining = self._fvg_window_remaining
             
             # 更新状态（无论是否交易都要更新，保证状态连续）
             self._prev_fvg_event = fvg_event
