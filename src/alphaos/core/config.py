@@ -230,8 +230,12 @@ class RiskConfig(BaseModel):
     max_position_usd: float = 10000.0
     max_daily_loss_pct: float = 2.0
     max_consecutive_losses: int = 5
+    timezone: str = "UTC"
+    trading_day_cutoff: int = 0  # Hour (0-23) when a new trading day begins in the timezone
     min_temperature: float = 0.5
     max_entropy: float = 0.7
+    timezone: str = "UTC"
+    trading_day_cutoff_hour: int = 0  # Trading day cutoff in timezone (0 = midnight)
     gate: "RiskGateConfig" = Field(default_factory=lambda: RiskGateConfig())
 
 
@@ -530,12 +534,20 @@ class ModelGuardianConfig(BaseModel):
     lock_file_path: str = "logs/model_guardian_lock.json"
 
 
+class WSRuntimeConfig(BaseModel):
+    """WebSocket runtime server configuration."""
+    host: str = "127.0.0.1"
+    allowed_origins: list[str] = Field(default_factory=list)
+    auth_tokens: list[str] = Field(default_factory=list)
+
+
 class MonitoringConfig(BaseModel):
     """Monitoring configuration."""
     prometheus_port: int = 9090
     metrics_prefix: str = "alphaos"
     enable_profiling: bool = False
     model_guardian: ModelGuardianConfig = Field(default_factory=ModelGuardianConfig)
+    ws_runtime: WSRuntimeConfig = Field(default_factory=WSRuntimeConfig)
     data_store: "DataStoreConfig" = Field(default_factory=lambda: DataStoreConfig())
 
 
@@ -774,6 +786,24 @@ class SystemConfig(BaseModel):
     timezone: str = "UTC"
 
 
+class ApiConfig(BaseModel):
+    """API/UI access configuration."""
+    cors_allow_origins: list[str] = Field(
+        default_factory=lambda: [
+            "http://localhost:5173",
+            "http://127.0.0.1:5173",
+        ]
+    )
+    ws_allowed_origins: list[str] = Field(
+        default_factory=lambda: [
+            "http://localhost:5173",
+            "http://127.0.0.1:5173",
+        ]
+    )
+    ws_auth_tokens: list[str] = Field(default_factory=list)
+    ws_host: str = "127.0.0.1"
+
+
 class AlphaOSConfig(BaseModel):
     """
     Complete AlphaOS configuration.
@@ -790,6 +820,7 @@ class AlphaOSConfig(BaseModel):
     symbol: str = "XAUUSD"
     symbol_info: SymbolInfo = Field(default_factory=SymbolInfo)
     system: SystemConfig = Field(default_factory=SystemConfig)
+    api: ApiConfig = Field(default_factory=ApiConfig)
     database: DatabaseConfig = Field(default_factory=DatabaseConfig)
     signal_database: DatabaseConfig | None = None  # Separate database for signals
     zeromq: ZeroMQConfig = Field(default_factory=ZeroMQConfig)

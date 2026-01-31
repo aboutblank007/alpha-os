@@ -16,18 +16,17 @@ async def init_db():
         print("Creating runtime_state table...")
         await conn.execute(text("""
             CREATE TABLE IF NOT EXISTS runtime_state (
-                timestamp FLOAT PRIMARY KEY,
-                symbol VARCHAR(20),
-                warmup_progress FLOAT,
-                ticks_total INTEGER,
+                time TIMESTAMPTZ NOT NULL,
+                symbol TEXT NOT NULL,
+                warmup_progress DOUBLE PRECISION,
+                ticks_total BIGINT,
                 open_positions INTEGER,
                 guardian_halt BOOLEAN,
-                market_phase VARCHAR(50),
-                temperature FLOAT,
-                entropy FLOAT,
                 exit_v21_enabled BOOLEAN,
-                db_snapshot_count INTEGER,
-                extra_data JSONB
+                market_phase TEXT,
+                temperature DOUBLE PRECISION,
+                entropy DOUBLE PRECISION,
+                snapshot_count BIGINT
             );
         """))
         print("Table created successfully.")
@@ -38,9 +37,9 @@ async def init_db():
         async with engine.begin() as conn:
              # Check if TimescaleDB extension exists
             await conn.execute(text("CREATE EXTENSION IF NOT EXISTS timescaledb CASCADE;"))
-            # Note: create_hypertable requires TIMESTAMP/INTEGER type for time column, FLOAT might fail
+            # Note: create_hypertable requires TIMESTAMP/INTEGER type for time column
             # We skip this for now to ensure stability unless we change schema
-            # await conn.execute(text("SELECT create_hypertable('runtime_state', 'timestamp', if_not_exists => TRUE);"))
+            # await conn.execute(text("SELECT create_hypertable('runtime_state', 'time', if_not_exists => TRUE);"))
             # print("Converted to Hypertable.")
             pass
     except Exception as e:
