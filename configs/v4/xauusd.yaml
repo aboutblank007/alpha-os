@@ -314,8 +314,8 @@ risk:
   max_position_usd: 10000.0     # 最大名义仓位美元
   max_daily_loss_pct: 2.0       # 每日最大亏损百分比
   max_consecutive_losses: 5     # 连续亏损上限
-  min_temperature: 0.0          # 低温过滤阈值（临时放开，用于验证是否能触发下单）
-  max_entropy: 0.7              # 高熵过滤阈值
+  min_temperature: 0.000001     # 低温过滤阈值 (1e-6, 过滤 Frozen)
+  max_entropy: 0.65             # 高熵过滤阈值 (理论最大 0.693, 0.65 过滤 Top 30% 混乱)
   daily_loss_cap: 20000.0       # 兼容旧字段（逐步弃用）
   max_drawdown_pct: 5.0         # 兼容旧字段（逐步弃用）
 

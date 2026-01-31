@@ -2481,16 +2481,6 @@ def serve_v4() -> None:
                             market_phase=market_phase_enum,
                         )
 
-                        # Hard guard: treat invalid/low temperature as frozen
-                        if signal_for_risk.temperature <= risk_manager.config.min_temperature:
-                            logger.warning(
-                                "Risk guard: low temperature, skip trade",
-                                temperature=signal_for_risk.temperature,
-                                threshold=risk_manager.config.min_temperature,
-                                phase=result.market_phase,
-                            )
-                            continue
-                        
                         risk_allowed, risk_reason = risk_manager.check_signal(signal_for_risk, context="entry")
                         if not risk_allowed:
                             logger.warning(
