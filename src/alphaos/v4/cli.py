@@ -2034,6 +2034,7 @@ def serve_v4() -> None:
                                     sl=exit_decision.new_sl,
                                     tp=state.initial_tp,
                                     comment=f"Exit_{exit_decision.stage}",
+                                    ticket=state.ticket,
                                 )
                                 try:
                                     result_modify = await _send_order(modify_order, context="EXIT_MOVE_SL")
@@ -2054,6 +2055,7 @@ def serve_v4() -> None:
                                     symbol=args.symbol,
                                     volume=exit_decision.close_lots,
                                     comment="Exit_PARTIAL",
+                                    ticket=state.ticket,
                                 )
                                 try:
                                     result_close = await _send_order(close_order, context="EXIT_PARTIAL")
@@ -2096,6 +2098,7 @@ def serve_v4() -> None:
                                     symbol=args.symbol,
                                     volume=state.current_lots,
                                     comment=f"Exit_{exit_decision.stage}",
+                                    ticket=state.ticket,
                                 )
                                 try:
                                     result_close = await _send_order(close_order, context="EXIT_FULL")

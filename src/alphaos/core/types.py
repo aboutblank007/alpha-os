@@ -206,6 +206,7 @@ class Order:
         tp: Take profit price
         deviation: Maximum allowed slippage in points
         comment: Order comment for logging
+        ticket: Optional MT5 position ticket for CLOSE/MODIFY
     """
     magic: int
     action: OrderAction
@@ -216,6 +217,7 @@ class Order:
     tp: float = 0.0
     deviation: int = 10
     comment: str = ""
+    ticket: int | None = None
 
 
 @dataclass(slots=True)
@@ -299,7 +301,7 @@ class OrderPacket(NamedTuple):
     """
     Binary packet for orders (Python -> MT5).
     
-    Format: '<BBddddQ' (42 bytes)
+    Format: '<BBddddQQ' (50 bytes)
     - msg_type: uint8 (2 = order)
     - action: uint8 (0=buy, 1=sell, 2=close)
     - volume: double
@@ -307,6 +309,7 @@ class OrderPacket(NamedTuple):
     - sl: double
     - tp: double
     - magic: uint64
+    - ticket: uint64
     """
     msg_type: int
     action: int
@@ -315,8 +318,9 @@ class OrderPacket(NamedTuple):
     sl: float
     tp: float
     magic: int
+    ticket: int
     
-    STRUCT_FORMAT = '<BBddddQ'
+    STRUCT_FORMAT = '<BBddddQQ'
     STRUCT_SIZE = struct.calcsize(STRUCT_FORMAT)
     
     def to_bytes(self) -> bytes:
@@ -330,6 +334,7 @@ class OrderPacket(NamedTuple):
             self.sl,
             self.tp,
             self.magic,
+            self.ticket,
         )
     
     @classmethod
@@ -343,4 +348,5 @@ class OrderPacket(NamedTuple):
             sl=order.sl,
             tp=order.tp,
             magic=order.magic,
+            ticket=order.ticket or 0,
         )

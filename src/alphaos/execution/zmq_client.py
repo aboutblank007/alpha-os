@@ -336,6 +336,7 @@ class ZeroMQClient:
             "deviation": order.deviation,
             "magic": order.magic,
             "comment": order.comment,
+            "ticket": order.ticket or 0,
             "request_id": str(order.magic)
         }
         
